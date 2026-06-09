@@ -19,12 +19,15 @@ Produces:
 """
 
 import argparse
+import html
 import json
 import os
 import platform
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ── 路徑設定（所有 venv 都在本專案的 venv/ 目錄下）──────────────────────────
@@ -53,6 +56,10 @@ def _is_apple_silicon() -> bool:
 EDGE_TTS_BIN = _venv_bin("tts", "edge-tts")
 DEFAULT_VOICE = "zh-TW-HsiaoChenNeural"
 DEFAULT_RATE = "+0%"
+
+# Azure TTS 設定
+AZURE_DEFAULT_VOICE = "zh-TW-HsiaoChenNeural"
+AZURE_DEFAULT_REGION = "eastasia"
 
 # ── Whisper 設定 ─────────────────────────────────────────────────────────────
 
@@ -141,6 +148,52 @@ def step_marp(output_dir: Path) -> int:
     count = len(sorted(output_dir.glob("slides.*.png")))
     print(f"  完成，共 {count} 張圖片。")
     return count
+
+
+def _ssml_wrap(text: str, voice: str, rate: str) -> str:
+    """純文字自動包成 SSML；已是 <speak> 開頭則直接使用（支援手寫 <phoneme>）。"""
+    text = text.strip()
+    if text.lower().startswith("<speak"):
+        return text
+    content = html.escape(text)
+    if rate and rate != "+0%":
+        content = f'<prosody rate="{rate}">{content}</prosody>'
+    return (
+        f'<speak version="1.0" '
+        f'xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-TW">\n'
+        f'  <voice name="{voice}">{content}</voice>\n'
+        f'</speak>'
+    )
+
+
+def step_tts_azure(output_dir: Path, narrations: list[Path],
+                   api_key: str, region: str, voice: str, rate: str) -> None:
+    """使用 Azure Speech REST API 合成語音。"""
+    print(f"[2/5] 旁白 → 語音（Azure Speech，聲音：{voice}）...")
+    url = f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
+    for nf in narrations:
+        idx = nf.stem.split("_")[-1]
+        audio_file = output_dir / f"audio_{idx}.mp3"
+        print(f"  生成 audio_{idx}.mp3 ...")
+        ssml = _ssml_wrap(nf.read_text(encoding="utf-8"), voice, rate)
+        req = urllib.request.Request(
+            url,
+            data=ssml.encode("utf-8"),
+            headers={
+                "Ocp-Apim-Subscription-Key": api_key,
+                "Content-Type": "application/ssml+xml",
+                "X-Microsoft-OutputFormat": "audio-16khz-128kbitrate-mono-mp3",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                audio_file.write_bytes(resp.read())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            print(f"  錯誤：Azure TTS HTTP {e.code}: {body}", file=sys.stderr)
+            sys.exit(1)
+    print("  完成。")
 
 
 def step_tts(output_dir: Path, narrations: list[Path], voice: str, rate: str) -> None:
@@ -253,10 +306,25 @@ def step_srt(output_dir: Path) -> Path:
 def main():
     parser = argparse.ArgumentParser(description="教學影片自動化工具")
     parser.add_argument("output_dir", help="含 slides.md 和 narration_*.txt 的目錄")
+    parser.add_argument("--concat-only", action="store_true",
+                        help="跳過 TTS，直接串接現有 segment_*.mp4（已有片段時使用）")
+    parser.add_argument("--tts", choices=["edge", "azure"],
+                        default=os.environ.get("MAKE_VIDEO_TTS", "edge"),
+                        help="TTS 後端：edge（預設）或 azure")
     parser.add_argument("--voice", default=os.environ.get("MAKE_VIDEO_VOICE", DEFAULT_VOICE),
                         help=f"Edge TTS 聲音（預設：{DEFAULT_VOICE}）")
     parser.add_argument("--rate", default=os.environ.get("MAKE_VIDEO_RATE", DEFAULT_RATE),
                         help="語速（預設：+0%，加速可用 +20%）")
+    # Azure TTS 選項
+    parser.add_argument("--azure-key",
+                        default=os.environ.get("AZURE_SPEECH_KEY", ""),
+                        help="Azure Speech API key（或設 AZURE_SPEECH_KEY 環境變數）")
+    parser.add_argument("--azure-region",
+                        default=os.environ.get("AZURE_SPEECH_REGION", AZURE_DEFAULT_REGION),
+                        help=f"Azure region（預設：{AZURE_DEFAULT_REGION}）")
+    parser.add_argument("--azure-voice",
+                        default=os.environ.get("AZURE_SPEECH_VOICE", AZURE_DEFAULT_VOICE),
+                        help=f"Azure TTS 聲音（預設：{AZURE_DEFAULT_VOICE}）")
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -264,6 +332,29 @@ def main():
     if not output_dir.is_dir():
         print(f"錯誤：目錄不存在：{output_dir}", file=sys.stderr)
         sys.exit(1)
+
+    # ── concat-only 模式 ──────────────────────────────────────────────────────
+    if args.concat_only:
+        segments = sorted(output_dir.glob("segment_*.mp4"))
+        if not segments:
+            print(f"錯誤：找不到 segment_*.mp4，請先執行完整生成流程", file=sys.stderr)
+            sys.exit(1)
+        print("=== 合併模式（concat-only）===")
+        print(f"目錄：{output_dir}")
+        print(f"片段數：{len(segments)}")
+        print()
+        final = step_concat(output_dir, segments)
+        print()
+        srt = step_srt(output_dir)
+        print()
+        size = final.stat().st_size
+        size_str = f"{size / (1024**2):.1f} MB" if size >= 1024**2 else f"{size / 1024:.1f} KB"
+        print("=== 完成 ===")
+        print(f"影片：{final}")
+        print(f"大小：{size_str}")
+        return
+
+    # ── 完整流程 ──────────────────────────────────────────────────────────────
     if not (output_dir / "slides.md").exists():
         print(f"錯誤：找不到 slides.md：{output_dir}", file=sys.stderr)
         sys.exit(1)
@@ -273,19 +364,31 @@ def main():
         print(f"錯誤：目錄中沒有 narration_*.txt：{output_dir}", file=sys.stderr)
         sys.exit(1)
 
-    if not EDGE_TTS_BIN.exists():
-        print(f"錯誤：找不到 edge-tts，請先執行 python setup.py", file=sys.stderr)
+    if args.tts == "azure":
+        if not args.azure_key:
+            print("錯誤：--azure-key 必填（或設 AZURE_SPEECH_KEY 環境變數）", file=sys.stderr)
+            sys.exit(1)
+    elif not EDGE_TTS_BIN.exists():
+        print("錯誤：找不到 edge-tts，請先執行 python setup.py", file=sys.stderr)
         sys.exit(1)
 
     print("=== make_video.py ===")
     print(f"目錄：{output_dir}")
     print(f"頁數：{len(narrations)}")
-    print(f"聲音：{args.voice}  語速：{args.rate}")
+    if args.tts == "azure":
+        print(f"聲音：{args.azure_voice}  Region：{args.azure_region}  語速：{args.rate}")
+    else:
+        print(f"聲音：{args.voice}  語速：{args.rate}")
     print()
 
     step_marp(output_dir)
     print()
-    step_tts(output_dir, narrations, args.voice, args.rate)
+    if args.tts == "azure":
+        step_tts_azure(output_dir, narrations,
+                       args.azure_key, args.azure_region,
+                       args.azure_voice, args.rate)
+    else:
+        step_tts(output_dir, narrations, args.voice, args.rate)
     print()
     segments = step_segments(output_dir, narrations)
     print()

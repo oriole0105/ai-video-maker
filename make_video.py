@@ -143,8 +143,12 @@ def find_audio(d: Path, idx: str) -> Path | None:
 
 def step_marp(output_dir: Path) -> int:
     print("[1/5] 投影片 → 圖片（Marp）...")
-    run(["marp", str(output_dir / "slides.md"), "--images", "png",
-         "--image-scale", "2", "-o", str(output_dir / "slides.png")])
+    cmd = ["marp", str(output_dir / "slides.md"), "--images", "png",
+           "--image-scale", "2", "-o", str(output_dir / "slides.png")]
+    themes_dir = SCRIPT_DIR / "themes"
+    if themes_dir.is_dir():
+        cmd += ["--theme-set", str(themes_dir)]
+    run(cmd)
     count = len(sorted(output_dir.glob("slides.*.png")))
     print(f"  完成，共 {count} 張圖片。")
     return count

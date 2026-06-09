@@ -168,7 +168,7 @@ my_lesson/
 ```markdown
 ---
 marp: true
-theme: default
+theme: tech-dark
 ---
 
 # 第一頁標題
@@ -184,6 +184,29 @@ theme: default
 ```
 
 三條橫線 `---` 即為分頁，其餘為標準 Markdown 語法。
+
+### 切換主題
+
+工具內建 4 套視覺主題，修改 `slides.md` 第一行的 `theme:` 欄位即可切換：
+
+| 主題名稱 | 風格 | 適合場合 |
+|---------|------|---------|
+| `tech-dark` | 深藍科技風（預設）| 技術簡報、深色場地 |
+| `clean-light` | 白底清爽風 | 明亮場地、一般簡報 |
+| `corporate-navy` | 藍灰商務風 | 正式會議、企業場合 |
+| `warm-amber` | 暖琥珀深色風 | 創意分享、視覺鮮明 |
+
+也可以用腳本直接切換：
+
+```bash
+# macOS
+./set_theme.sh clean-light ./my_lesson/
+
+# Windows（雙擊後輸入，或在命令提示字元）
+set_theme.bat clean-light my_lesson\
+```
+
+不帶任何參數執行可查看所有可用主題。
 
 ### 撰寫旁白
 

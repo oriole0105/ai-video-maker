@@ -1,0 +1,21 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.DS_Store
+Thumbs.db
+
+# 影片輸出（不納入版本控制）
+example/*.png
+example/*.mp3
+example/*.mp4
+example/*.srt
+example/concat_list.txt
+
+# 自訂課程（只追蹤 slides.md 和 narration，不追蹤產出）
+lessons/*/slides.*.png
+lessons/*/audio_*.mp3
+lessons/*/segment_*.mp4
+lessons/*/concat_list.txt
+lessons/*/final.*

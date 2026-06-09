@@ -11,6 +11,7 @@ Expects in output_dir:
 
 Produces:
   slides.001.png .. slides.NNN.png   — 投影片圖片
+  slides.pdf                         — 投影片 PDF（供文件分享）
   audio_01.mp3 .. audio_NN.mp3       — TTS 語音
   segment_01.mp4 .. segment_NN.mp4   — 每頁影片片段
   concat_list.txt                    — FFmpeg concat 清單
@@ -142,15 +143,35 @@ def find_audio(d: Path, idx: str) -> Path | None:
 # ── Pipeline 步驟 ─────────────────────────────────────────────────────────────
 
 def step_marp(output_dir: Path) -> int:
-    print("[1/5] 投影片 → 圖片（Marp）...")
-    cmd = ["marp", str(output_dir / "slides.md"), "--images", "png",
-           "--image-scale", "2", "-o", str(output_dir / "slides.png")]
+    print("[1/5] 投影片 → 圖片 + PDF（Marp）...")
     themes_dir = SCRIPT_DIR / "themes"
-    if themes_dir.is_dir():
-        cmd += ["--theme-set", str(themes_dir)]
-    run(cmd)
+    theme_args = ["--theme-set", str(themes_dir)] if themes_dir.is_dir() else []
+    base = ["marp", str(output_dir / "slides.md")] + theme_args
+
+    try:
+        p_png = subprocess.Popen(
+            base + ["--images", "png", "--image-scale", "2",
+                    "-o", str(output_dir / "slides.png")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        p_pdf = subprocess.Popen(
+            base + ["--pdf", "-o", str(output_dir / "slides.pdf")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    except FileNotFoundError:
+        print("  錯誤：找不到 marp，請確認已安裝 @marp-team/marp-cli", file=sys.stderr)
+        sys.exit(1)
+
+    for p, label in [(p_png, "PNG"), (p_pdf, "PDF")]:
+        _, stderr = p.communicate()
+        if p.returncode != 0:
+            print(f"  錯誤：Marp {label} 生成失敗", file=sys.stderr)
+            if stderr:
+                print(f"  {stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+
     count = len(sorted(output_dir.glob("slides.*.png")))
-    print(f"  完成，共 {count} 張圖片。")
+    print(f"  完成，共 {count} 張圖片，已同步產生 slides.pdf。")
     return count
 
 
@@ -318,7 +339,7 @@ def main():
     parser.add_argument("--voice", default=os.environ.get("MAKE_VIDEO_VOICE", DEFAULT_VOICE),
                         help=f"Edge TTS 聲音（預設：{DEFAULT_VOICE}）")
     parser.add_argument("--rate", default=os.environ.get("MAKE_VIDEO_RATE", DEFAULT_RATE),
-                        help="語速（預設：+0%，加速可用 +20%）")
+                        help="語速（預設：+0%%，加速可用 +20%%）")
     # Azure TTS 選項
     parser.add_argument("--azure-key",
                         default=os.environ.get("AZURE_SPEECH_KEY", ""),

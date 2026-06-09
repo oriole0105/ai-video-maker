@@ -222,6 +222,7 @@ set_theme.bat clean-light my_lesson\
 ```
 my_lesson/
 ├── slides.001.png     ← 投影片圖片
+├── slides.pdf         ← 投影片 PDF（供文件分享）
 ├── audio_01.mp3       ← 語音
 ├── segment_01.mp4     ← 單頁片段
 │   ...

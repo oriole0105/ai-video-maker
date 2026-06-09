@@ -66,7 +66,8 @@ AZURE_DEFAULT_REGION = "eastasia"
 
 WHISPER_PYTHON = _venv_bin("whisper", "python")
 WHISPER_MODEL_MLX = "mlx-community/whisper-large-v3-turbo"
-WHISPER_MODEL_FAST = "medium"
+_offline_model = SCRIPT_DIR / "offline_pack" / "whisper_model"
+WHISPER_MODEL_FAST = str(_offline_model) if (_offline_model / "model.bin").exists() else "medium"
 
 WHISPER_SCRIPT_MLX = """
 import sys, json

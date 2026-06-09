@@ -246,6 +246,40 @@ my_lesson/
 
 ---
 
+## 公司環境 / 離線安裝
+
+若公司內網無法存取 PyPI 或 HuggingFace，可用離線包方式安裝。
+
+### 步驟一：在家準備離線包（需要網路）
+
+```bash
+# 下載 Windows 套件 + Whisper 模型到 offline_pack/
+python prepare_offline.py
+
+# 指定 Python 版本（需與公司 Windows 機器一致）
+python prepare_offline.py --py 311
+```
+
+完成後將整個 `ai-video-maker/` 資料夾壓縮傳給同仁（含 `offline_pack/`，約 2 GB）。
+
+### 步驟二：在公司 Windows 安裝（不需網路）
+
+雙擊 `setup_offline.bat`，腳本會自動：
+- 建立 Python 虛擬環境
+- 從 `offline_pack/wheels/` 安裝套件（不碰 PyPI）
+- 使用 `offline_pack/whisper_model/` 的本機模型（不碰 HuggingFace）
+
+### 網路需求說明
+
+| 元件 | 需要網路 | 說明 |
+|------|---------|------|
+| 套件安裝 | ❌ 離線 | 從 offline_pack/wheels/ 安裝 |
+| Whisper 模型 | ❌ 離線 | 從 offline_pack/whisper_model/ 載入 |
+| Marp / FFmpeg | ❌ 離線 | 本機工具 |
+| Edge TTS 語音合成 | ✅ 需要 | 呼叫 `*.tts.speech.microsoft.com`（Microsoft 官方服務，大多公司網路可通）|
+
+---
+
 ## 注意事項
 
 - 字幕辨識首次執行需下載 Whisper 模型（約 1 GB），之後不需重複下載

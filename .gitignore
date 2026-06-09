@@ -6,8 +6,12 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# 離線安裝包（模型 + wheels，檔案過大）
+offline_pack/
+
 # 影片輸出（不納入版本控制）
 example/*.png
+example/*.pdf
 example/*.mp3
 example/*.mp4
 example/*.srt

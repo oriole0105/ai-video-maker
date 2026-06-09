@@ -227,7 +227,7 @@ my_lesson/
 
 ```bash
 # 1. 下載工具
-git clone https://github.com/your-repo/ai-video-maker
+git clone https://github.com/oriole0105/ai-video-maker
 cd ai-video-maker
 
 # 2. 安裝相依套件（自動偵測平台）

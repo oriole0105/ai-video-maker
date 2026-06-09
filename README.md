@@ -50,7 +50,7 @@ npm install -g @marp-team/marp-cli
 ### 3. 下載並安裝 ai-video-maker
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/oriole0105/ai-video-maker
 cd ai-video-maker
 python setup.py
 ```

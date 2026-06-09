@@ -4,47 +4,253 @@ theme: default
 paginate: true
 style: |
   section {
-    background: #1e2a38;
+    background: linear-gradient(160deg, #1a1a2e 0%, #16213e 100%);
     color: #e0e0e0;
-    font-family: "PingFang TC", "Microsoft JhengHei", sans-serif;
-    font-size: 28px;
+    font-family: "PingFang TC", "Noto Sans CJK TC", "Microsoft JhengHei", sans-serif;
     padding: 50px 70px;
+    font-size: 28px;
   }
-  h1 { color: #4fc3f7; border-bottom: 2px solid #4fc3f7; padding-bottom: 10px; }
+  h1 {
+    color: #4fc3f7;
+    border-bottom: 2px solid #4fc3f7;
+    padding-bottom: 12px;
+    margin-bottom: 30px;
+  }
+  h2 { color: #90caf9; margin-top: 0; }
   strong { color: #ffcc02; }
-  code { background: #0d1b2a; color: #80cbc4; border-radius: 4px; padding: 2px 8px; }
-  pre { background: #0d1b2a; border-radius: 8px; padding: 20px; }
-  pre code { color: #a5d6a7; background: transparent; font-size: 0.85em; }
+  em { color: #80deea; font-style: normal; }
+  code {
+    background: #0d1b2a;
+    color: #80cbc4;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 0.85em;
+  }
+  pre {
+    background: #0d1b2a;
+    border-radius: 8px;
+    padding: 20px;
+    border-left: 4px solid #4fc3f7;
+  }
+  pre code {
+    color: #a5d6a7;
+    background: transparent;
+    font-size: 0.78em;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+  th {
+    background: #0d1b2a;
+    color: #4fc3f7;
+    padding: 10px 20px;
+    text-align: left;
+  }
+  td {
+    padding: 10px 20px;
+    border-bottom: 1px solid #2a3a4a;
+    background: #162033;
+    color: #d8eaf8;
+  }
+  tr:nth-child(even) td { background: #1c2a40; }
+  ul { padding-left: 28px; }
+  li { margin-bottom: 12px; line-height: 1.5; }
+  blockquote {
+    border-left: 4px solid #ffcc02;
+    padding-left: 20px;
+    color: #bbb;
+    font-size: 0.92em;
+    margin: 20px 0;
+  }
+  section.center {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+  }
+  footer { color: #555; font-size: 18px; }
 ---
 
-# ai-video-maker 使用範例
+<!-- _class: center -->
 
-## 歡迎使用自動化教學影片工具
+# 用 AI 製作教學影片
 
-這是一個展示用的投影片，搭配旁白文字，透過工具自動生成語音和影片。
+## 讓打字取代錄音的自動化工具
+
+<br>
+
+技術分享 · 2026
 
 ---
 
-# 工具的運作方式
+# 你有沒有這樣的困擾？
 
-1. 用 **Markdown** 撰寫投影片內容
-2. 用純文字撰寫每頁的**口說旁白**
-3. 執行一行指令，自動產生完整影片
+- **要錄教學影片**，但對著麥克風說話說不順
+- **投影片改了一頁**，整部影片要重新錄過
+- **環境有雜音**，錄出來效果差強人意
+- **時間成本高**：準備 + 錄製 + 剪輯，動輒半天
 
-```bash
-python make_video.py ./example/
+<br>
+
+> 有沒有辦法讓影片製作像「寫文件」一樣簡單？
+
+---
+
+# 解決方案：三步驟自動化
+
+<br>
+
+```
+  slides.md           →  [Marp]     →  投影片圖片
+  narration_01.txt    →  [Edge TTS] →  語音 MP3
+                              ↓
+                          [FFmpeg]
+                              ↓
+                          final.mp4 + 字幕 ✅
 ```
 
-**輸出：** `example/final.mp4`（Full HD，含字幕）
+<br>
+
+**工具全部免費，支援 Mac / Windows，本機執行不上傳資料。**
 
 ---
 
-# 開始製作你的第一部影片
+# Step 1 — 投影片：Markdown 格式
 
-將 `example/` 資料夾複製一份，修改投影片和旁白內容，就能做出專屬的教學影片。
+## Marp：把文字變投影片
 
-**旁白撰寫提示：**
+```markdown
+---
+marp: true
+---
 
-- 用自然的口語，不用念程式碼指令
-- 全部用中文，避免中英文切換
-- 每頁旁白約 100–200 字最適合
+# 第一頁標題
+
+- 重點一
+- 重點二
+
+---
+
+# 第二頁標題
+
+可以放程式碼、圖片、表格…
+```
+
+**三條橫線就是分頁，其餘是標準 Markdown 語法。**
+
+---
+
+# Step 2 — 旁白：每頁一個文字檔
+
+```
+my_lesson/
+├── slides.md
+├── narration_01.txt   ← 第一頁旁白
+├── narration_02.txt   ← 第二頁旁白
+└── narration_03.txt   ← 第三頁旁白
+```
+
+旁白範例（`narration_01.txt`）：
+
+```
+今天要介紹的是 APB 匯流排的基本概念。
+它是一種低功耗的周邊匯流排，
+通常用來連接低速的周邊裝置。
+```
+
+語音合成使用**微軟台灣腔中文女聲**，免費、自然、流暢。
+
+---
+
+# Step 3 — 執行一行指令
+
+```bash
+python make_video.py ./my_lesson/
+```
+
+工具自動完成五個步驟：
+
+| 步驟 | 動作 |
+|------|------|
+| **[1/5]** | 投影片 Markdown → 高解析圖片 |
+| **[2/5]** | 旁白文字 → 語音 MP3（逐頁合成）|
+| **[3/5]** | 每頁圖片 + 語音 → 影片片段 |
+| **[4/5]** | 所有片段串接為完整影片 |
+| **[5/5]** | 語音辨識自動產生字幕 |
+
+---
+
+# 執行結果
+
+```
+my_lesson/
+├── slides.001.png    ← 投影片圖片
+├── audio_01.mp3      ← 語音檔
+├── segment_01.mp4    ← 單頁影片片段
+│   ...
+├── final.srt         ← 字幕檔（Whisper 辨識）
+└── final.mp4         ← ✅ 完整影片（含字幕軌）
+```
+
+<br>
+
+- 解析度：**1920 × 1080 Full HD**
+- 字幕：**Whisper 語音辨識自動產生，繁體中文**
+- 格式：標準 MP4，可直接上傳任何平台
+
+---
+
+# 傳統方式 vs 這套工具
+
+| 傳統方式 | 這套工具 |
+|---------|---------|
+| 對麥克風一頁頁錄音 | **打字**就好，語音自動合成 |
+| 說錯一句要重錄整段 | 改一行文字，重跑一次 |
+| 需要剪輯軟體技能 | 只要會用命令列 |
+| 字幕要手動打 | Whisper 語音辨識**自動生成** |
+| 版本難以管理 | 純文字，**版本控制友善** |
+
+---
+
+# 常見問題與解決方法
+
+| 問題 | 原因 | 解法 |
+|------|------|------|
+| 多音字念錯（**重**跑、一**行**）| TTS 無法判斷語境讀音 | 換詞：重跑→**再跑一次**，一行指令→**一個指令** |
+| 中英文混用語音卡頓 | Edge TTS 中英切換時斷頓 | 旁白**全用中文**，技術詞口語化 |
+| Marp 轉圖失敗 | 缺少 Chrome 瀏覽器 | 安裝 Google Chrome |
+| 字幕辨識第一次超慢 | 需下載 Whisper 語言模型 | 等待下載（約 1 GB），只需一次 |
+| 旁白頁數對不上 | narration 數量 ≠ 投影片頁數 | 確認兩者數量相符 |
+
+---
+
+# 如何安裝使用
+
+```bash
+# 1. 下載工具
+git clone https://github.com/your-repo/ai-video-maker
+cd ai-video-maker
+
+# 2. 安裝相依套件（自動偵測平台）
+python setup.py
+
+# 3. 開始製作影片
+python make_video.py ./your_lesson/
+```
+
+**系統需求**
+
+- Python 3.10+、Node.js、FFmpeg、Google Chrome
+- 支援 **Windows 10/11** 及 macOS
+- 安裝腳本會自動處理 Python 套件
+
+---
+
+<!-- _class: center -->
+
+# 這份投影片
+
+## 就是用這套工具自動生成的
+
+<br>
+
+**謝謝大家 · 歡迎提問**

@@ -22,9 +22,16 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 OFFLINE_DIR = SCRIPT_DIR / "offline_pack"
 WHEELS_DIR = OFFLINE_DIR / "wheels"
 MODEL_DIR = OFFLINE_DIR / "whisper_model"
+PIPER_MODEL_DIR = OFFLINE_DIR / "piper_model"
 
-WIN_PACKAGES = ["edge-tts", "faster-whisper", "opencc-python-reimplemented"]
+WIN_PACKAGES = ["edge-tts", "faster-whisper", "opencc-python-reimplemented", "piper-tts"]
 HF_REPO = "Systran/faster-whisper-medium"
+
+PIPER_MODEL_NAME = "zh_CN-huayan-medium"
+PIPER_HF_BASE = (
+    "https://huggingface.co/rhasspy/piper-voices/resolve/main"
+    "/zh/zh_CN/huayan/medium"
+)
 
 
 # ── 下載輔助 ──────────────────────────────────────────────────────────────────
@@ -69,8 +76,17 @@ def hf_file_list(repo: str) -> list[str]:
 
 # ── 步驟 ──────────────────────────────────────────────────────────────────────
 
+def step_piper_model() -> None:
+    print(f"\n[ 2/3 ] 下載 Piper 語音模型（{PIPER_MODEL_NAME}，約 80 MB）...")
+    PIPER_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    for ext in (".onnx", ".onnx.json"):
+        fname = PIPER_MODEL_NAME + ext
+        download_file(f"{PIPER_HF_BASE}/{fname}", PIPER_MODEL_DIR / fname)
+    print(f"  ✅ Piper 模型下載完成 → {PIPER_MODEL_DIR}")
+
+
 def step_wheels(py_ver: str) -> None:
-    print(f"\n[ 1/2 ] 下載 Windows 套件 (Python {py_ver}, win_amd64)...")
+    print(f"\n[ 1/3 ] 下載 Windows 套件 (Python {py_ver}, win_amd64)...")
     WHEELS_DIR.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -98,7 +114,7 @@ def step_wheels(py_ver: str) -> None:
 
 
 def step_model() -> None:
-    print(f"\n[ 2/2 ] 下載 Whisper 模型（{HF_REPO}）...")
+    print(f"\n[ 3/3 ] 下載 Whisper 模型（{HF_REPO}）...")
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
     print("  取得檔案清單...", end="", flush=True)
@@ -121,23 +137,28 @@ def step_model() -> None:
 
 def print_summary(py_ver: str) -> None:
     wheels_n = len(list(WHEELS_DIR.glob("*.whl"))) if WHEELS_DIR.exists() else 0
-    model_mb = sum(f.stat().st_size for f in MODEL_DIR.rglob("*") if f.is_file()) // (1024 * 1024) \
-               if MODEL_DIR.exists() else 0
+    whisper_mb = sum(f.stat().st_size for f in MODEL_DIR.rglob("*") if f.is_file()) // (1024 * 1024) \
+                 if MODEL_DIR.exists() else 0
+    piper_mb = sum(f.stat().st_size for f in PIPER_MODEL_DIR.rglob("*") if f.is_file()) // (1024 * 1024) \
+               if PIPER_MODEL_DIR.exists() else 0
 
     print()
     print("=" * 56)
     print("  offline_pack/ 準備完成")
     print("=" * 56)
     print(f"  wheels/          {wheels_n} 個 wheel，Python {py_ver} / win_amd64")
-    print(f"  whisper_model/   {model_mb} MB")
+    print(f"  whisper_model/   {whisper_mb} MB")
+    print(f"  piper_model/     {piper_mb} MB")
     print()
     print("  傳給同仁的步驟：")
     print("  1. 將整個 ai-video-maker/ 壓縮後傳給同仁")
     print("     （含 offline_pack/，約 2 GB）")
     print("  2. 同仁解壓後雙擊執行 setup_offline.bat")
     print()
-    print("  ⚠️  Edge TTS 語音合成仍需連到 Microsoft 伺服器")
-    print("     請確認公司網路可存取 *.tts.speech.microsoft.com")
+    print("  ℹ️  TTS 模式比較：")
+    print("     --tts edge   需連到 *.tts.speech.microsoft.com（台灣腔，最自然）")
+    print("     --tts piper  完全離線（普通話腔，CPU 極快）")
+    print("     --tts melo   僅線上安裝，不含於此離線包（CPU 中速）")
     print("=" * 56)
 
 
@@ -145,17 +166,21 @@ def main() -> None:
     p = argparse.ArgumentParser(description="預先下載 Windows 離線安裝包")
     p.add_argument("--py", default="310", metavar="VER",
                    help="目標 Python 版本，不含小數點（預設：310）")
-    p.add_argument("--wheels-only", action="store_true", help="只下載套件")
-    p.add_argument("--model-only",  action="store_true", help="只下載模型")
+    p.add_argument("--wheels-only",  action="store_true", help="只下載套件")
+    p.add_argument("--model-only",   action="store_true", help="只下載 Whisper 模型")
+    p.add_argument("--piper-only",   action="store_true", help="只下載 Piper 模型")
     args = p.parse_args()
 
     print("=== prepare_offline.py ===")
     print(f"輸出目錄：{OFFLINE_DIR}")
 
-    if not args.model_only:
+    only = args.wheels_only or args.model_only or args.piper_only
+    if not args.model_only and not args.piper_only:
         step_wheels(args.py)
-    if not args.wheels_only:
+    if not args.wheels_only and not args.piper_only:
         step_model()
+    if not args.wheels_only and not args.model_only:
+        step_piper_model()
 
     print_summary(args.py)
 

@@ -33,8 +33,8 @@ echo   套件來源: %WHEELS%
 echo   安裝位置: %VENV_DIR%
 echo.
 
-:: ── [ 1/2 ] Edge TTS ─────────────────────────────────────────────────────────
-echo [ 1/2 ] 安裝 edge-tts...
+:: ── [ 1/3 ] Edge TTS ─────────────────────────────────────────────────────────
+echo [ 1/3 ] 安裝 edge-tts...
 python -m venv "%VENV_DIR%\tts"
 if errorlevel 1 ( echo [錯誤] 建立 venv 失敗 & goto :fail )
 
@@ -44,8 +44,8 @@ if errorlevel 1 ( echo [錯誤] 建立 venv 失敗 & goto :fail )
 if errorlevel 1 ( echo [錯誤] edge-tts 安裝失敗 & goto :fail )
 echo   OK
 
-:: ── [ 2/2 ] Whisper ───────────────────────────────────────────────────────────
-echo [ 2/2 ] 安裝 faster-whisper...
+:: ── [ 2/3 ] Whisper ───────────────────────────────────────────────────────────
+echo [ 2/3 ] 安裝 faster-whisper...
 python -m venv "%VENV_DIR%\whisper"
 if errorlevel 1 ( echo [錯誤] 建立 venv 失敗 & goto :fail )
 
@@ -53,6 +53,17 @@ if errorlevel 1 ( echo [錯誤] 建立 venv 失敗 & goto :fail )
     --no-index --find-links "%WHEELS%" ^
     faster-whisper opencc-python-reimplemented --quiet
 if errorlevel 1 ( echo [錯誤] faster-whisper 安裝失敗 & goto :fail )
+echo   OK
+
+:: ── [ 3/3 ] Piper TTS ────────────────────────────────────────────────────────
+echo [ 3/3 ] 安裝 piper-tts...
+python -m venv "%VENV_DIR%\piper"
+if errorlevel 1 ( echo [錯誤] 建立 venv 失敗 & goto :fail )
+
+"%VENV_DIR%\piper\Scripts\pip.exe" install ^
+    --no-index --find-links "%WHEELS%" ^
+    piper-tts --quiet
+if errorlevel 1 ( echo [錯誤] piper-tts 安裝失敗 & goto :fail )
 echo   OK
 
 :: ── 系統工具檢查 ──────────────────────────────────────────────────────────────
@@ -88,6 +99,17 @@ if exist "%SCRIPT_DIR%offline_pack\whisper_model\model.bin" (
     echo       首次產生字幕時會嘗試從 HuggingFace 下載（約 1.5 GB）
     echo       若公司網路擋 HuggingFace，請先在家執行：
     echo         python prepare_offline.py --model-only
+)
+
+:: ── Piper 模型狀態 ─────────────────────────────────────────────────────────
+echo.
+echo ── Piper 模型 ───────────────────────────────────
+if exist "%SCRIPT_DIR%offline_pack\piper_model\zh_CN-huayan-medium.onnx" (
+    echo   OK  Piper 模型已就緒（--tts piper 可用）
+) else (
+    echo   ！  offline_pack\piper_model\ 不存在
+    echo       如需使用 --tts piper，請先在家執行：
+    echo         python prepare_offline.py --piper-only
 )
 
 :: ── 網路需求提醒 ────────────────────────────────────────────────────────────

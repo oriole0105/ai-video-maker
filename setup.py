@@ -121,7 +121,7 @@ def cmd_check() -> None:
 
     print()
     print("[ Python venv ]")
-    for name in ("tts", "whisper"):
+    for name in ("tts", "whisper", "piper", "melo"):
         py = venv_python(name)
         ok(f"venv/{name}/", py.exists(), f"尚未安裝，執行 python setup.py 以建立")
 
@@ -143,13 +143,13 @@ def cmd_install() -> None:
     VENV_DIR.mkdir(parents=True, exist_ok=True)
 
     # Edge TTS
-    print("[ 1/2 ] 安裝 Edge TTS...")
+    print("[ 1/4 ] 安裝 Edge TTS...")
     uv_create_venv("tts")
     uv_install("tts", "edge-tts")
     print("  ✅ edge-tts 安裝完成\n")
 
     # Whisper
-    print("[ 2/2 ] 安裝 Whisper（字幕辨識）...")
+    print("[ 2/4 ] 安裝 Whisper（字幕辨識）...")
     uv_create_venv("whisper")
     if is_apple_silicon():
         print("  → Apple Silicon：安裝 mlx-whisper + opencc")
@@ -162,6 +162,21 @@ def cmd_install() -> None:
         print("  ✅ faster-whisper + opencc 安裝完成")
         print("  ℹ️  首次執行時會自動下載模型（約 1.5 GB）")
     print()
+
+    # Piper TTS
+    print("[ 3/4 ] 安裝 Piper TTS（本地語音，CPU 快速）...")
+    uv_create_venv("piper")
+    uv_install("piper", "piper-tts")
+    print("  ✅ piper-tts 安裝完成")
+    print("  ℹ️  需下載模型才能使用：python prepare_offline.py --piper-only\n")
+
+    # MeloTTS
+    print("[ 4/4 ] 安裝 MeloTTS（本地語音，CPU 中速）...")
+    print("  → 安裝 melo-tts（含 PyTorch CPU，約 300 MB，請稍候）...")
+    uv_create_venv("melo")
+    uv_install("melo", "melo-tts")
+    print("  ✅ melo-tts 安裝完成")
+    print("  ℹ️  首次執行時會自動下載模型（約 300 MB）\n")
 
     # 系統工具提醒
     missing = [t for t, good in checks.items() if not good and t != "uv"]
@@ -177,6 +192,36 @@ def cmd_install() -> None:
         for t in missing:
             cmd = install_hints[t][1 if is_win else 0]
             print(f"  ⚠️  {t}：{cmd}")
+
+        if "marp" in missing:
+            print()
+            if is_win:
+                print("  ────────────────────────────────────────────────────")
+                print("  ⚠️  marp 安裝步驟（Windows）：")
+                print()
+                print("  1. 確認 Node.js 已安裝（需 v18+）：")
+                if not checks.get("node"):
+                    print("     → 官網下載（LTS 版）：https://nodejs.org/")
+                    print("       或：winget install OpenJS.NodeJS")
+                else:
+                    print("     ✅ node 已安裝")
+                print()
+                print("  2. 安裝 marp-cli（需網路，約 200 MB）：")
+                print("     npm install -g @marp-team/marp-cli")
+                print()
+                print("  3. 確認安裝成功（開新命令提示字元後執行）：")
+                print("     marp --version")
+                print()
+                print("  ℹ️  公司電腦若無法使用 npm install -g，請洽 IT 協助安裝 Node.js，")
+                print("      或使用 npx（每次執行需下載，較慢）。")
+                print("  ────────────────────────────────────────────────────")
+            else:
+                print("  ────────────────────────────────────────────────────")
+                print("  ⚠️  marp 安裝步驟（macOS）：")
+                print("  1. brew install node   （已有 node 可跳過）")
+                print("  2. npm install -g @marp-team/marp-cli")
+                print("  3. marp --version      （確認安裝成功）")
+                print("  ────────────────────────────────────────────────────")
         print()
 
     print("=== 安裝完成 ===")

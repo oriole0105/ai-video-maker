@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -158,6 +159,66 @@ HTML = r"""<!DOCTYPE html>
   .nav-btns { display: flex; gap: 6px; }
   .btn-nav { background: rgba(255,255,255,0.15); color: white; padding: 5px 12px; }
   .btn-nav:hover:not(:disabled) { background: rgba(255,255,255,0.25); }
+  .btn-settings { background: rgba(255,255,255,0.15); color: white; padding: 5px 12px; }
+  .btn-settings:hover { background: rgba(255,255,255,0.25); }
+  .btn-settings.active { background: rgba(255,255,255,0.3); outline: 2px solid rgba(255,255,255,0.4); }
+
+  /* Settings panel */
+  .settings-panel {
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    padding: 10px 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .settings-group { display: flex; align-items: center; gap: 8px; }
+  .settings-label { font-size: 12px; font-weight: 600; color: #64748b; white-space: nowrap; }
+  .settings-hint { font-size: 11px; color: #94a3b8; }
+  .settings-panel select,
+  .settings-panel input[type="text"],
+  .settings-panel input[type="password"] {
+    padding: 4px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    font-size: 13px;
+    background: white;
+    font-family: inherit;
+  }
+  .settings-panel select:focus,
+  .settings-panel input:focus { outline: none; border-color: #2563eb; }
+
+  .theme-options { display: flex; gap: 8px; flex-wrap: wrap; }
+  .theme-opt {
+    display: flex; align-items: center; gap: 5px;
+    cursor: pointer; font-size: 12px; color: #374151;
+    padding: 4px 8px; border-radius: 5px;
+    border: 1px solid #e2e8f0; background: white;
+    transition: border-color 0.15s;
+    user-select: none;
+  }
+  .theme-opt:hover { border-color: #94a3b8; }
+  .theme-opt input[type="radio"] { display: none; }
+  .theme-opt.selected { border-color: #2563eb; background: #eff6ff; font-weight: 600; }
+  .theme-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.15); }
+
+  .settings-divider { width: 100%; height: 1px; background: #e2e8f0; margin: 6px 0; }
+  .settings-section-label {
+    font-size: 10px; font-weight: 700; color: #94a3b8;
+    text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;
+  }
+  .btn-refresh {
+    padding: 4px 12px; border-radius: 5px; border: 1px solid #cbd5e1;
+    background: white; font-size: 12px; font-weight: 500; cursor: pointer;
+    color: #374151; transition: all 0.15s;
+  }
+  .btn-refresh:hover:not(:disabled) { border-color: #2563eb; color: #2563eb; }
+  .btn-refresh:disabled { opacity: 0.5; cursor: default; }
+  .btn-refresh.pending {
+    background: #fffbeb; border-color: #f59e0b; color: #92400e; font-weight: 600;
+  }
 </style>
 </head>
 <body>
@@ -173,9 +234,73 @@ HTML = r"""<!DOCTYPE html>
       <button class="btn-nav" id="nextBtn" onclick="navigate(1)" disabled>下一頁 ›</button>
     </div>
     <span class="gen-status" id="genStatus"></span>
+    <button class="btn-settings" id="settingsBtn" onclick="toggleSettings()">⚙ 設定</button>
     <button class="btn-generate" id="genBtn" onclick="generateVideo()">▶ 生成影片</button>
   </div>
 </header>
+
+<div class="settings-panel" id="settingsPanel" style="display:none">
+
+  <!-- 投影片設定 -->
+  <span class="settings-section-label">投影片</span>
+  <div class="settings-group">
+    <span class="settings-label">主題</span>
+    <div class="theme-options" id="themeOptions">
+      <label class="theme-opt" data-theme="tech-dark">
+        <input type="radio" name="theme" value="tech-dark">
+        <span class="theme-swatch" style="background:#1a1a2e;border-color:#3b82f6"></span>科技深藍
+      </label>
+      <label class="theme-opt" data-theme="clean-light">
+        <input type="radio" name="theme" value="clean-light">
+        <span class="theme-swatch" style="background:#ffffff;border-color:#94a3b8"></span>清爽白底
+      </label>
+      <label class="theme-opt" data-theme="corporate-navy">
+        <input type="radio" name="theme" value="corporate-navy">
+        <span class="theme-swatch" style="background:#f0f4f8;border-color:#2d3748"></span>商務深藍
+      </label>
+      <label class="theme-opt" data-theme="warm-amber">
+        <input type="radio" name="theme" value="warm-amber">
+        <span class="theme-swatch" style="background:#1c1208;border-color:#f59e0b"></span>暖琥珀
+      </label>
+    </div>
+  </div>
+  <div class="settings-group">
+    <button class="btn-refresh" id="refreshBtn" onclick="refreshSlides()">↺ 更新投影片圖片</button>
+    <span class="settings-hint" id="themeStatus"></span>
+  </div>
+
+  <div class="settings-divider"></div>
+
+  <!-- 影片生成設定 -->
+  <span class="settings-section-label">影片生成</span>
+  <div class="settings-group">
+    <span class="settings-label">TTS 引擎</span>
+    <select id="settingTts" onchange="onTtsChange()">
+      <option value="edge">Edge TTS（台灣腔，需網路）</option>
+      <option value="piper">Piper（離線，普通話）</option>
+      <option value="melo">MeloTTS（離線）</option>
+      <option value="azure">Azure Speech</option>
+    </select>
+  </div>
+  <div class="settings-group">
+    <span class="settings-label">語速</span>
+    <input type="text" id="settingRate" value="+0%" style="width:72px">
+    <span class="settings-hint">例：+30%、-10%</span>
+  </div>
+  <div class="settings-group" id="voiceGroup">
+    <span class="settings-label">聲音</span>
+    <input type="text" id="settingVoice" value="zh-TW-HsiaoChenNeural" style="width:230px">
+  </div>
+  <div class="settings-group" id="azureKeyGroup" style="display:none">
+    <span class="settings-label">Azure Key</span>
+    <input type="password" id="settingAzureKey" placeholder="Subscription Key" style="width:200px">
+  </div>
+  <div class="settings-group" id="azureRegionGroup" style="display:none">
+    <span class="settings-label">Region</span>
+    <input type="text" id="settingAzureRegion" value="eastasia" style="width:100px">
+  </div>
+
+</div>
 
 <div class="main">
   <div class="sidebar" id="sidebar"></div>
@@ -191,12 +316,86 @@ HTML = r"""<!DOCTYPE html>
 let slides = [];
 let currentIdx = null;
 let unsaved = new Set();
+let imageVersion = Date.now();
+
+function initTheme(current) {
+  document.querySelectorAll('.theme-opt').forEach(label => {
+    const val = label.dataset.theme;
+    label.classList.toggle('selected', val === current);
+    label.querySelector('input').checked = (val === current);
+    label.onclick = () => applyTheme(val);
+  });
+}
+
+async function applyTheme(theme) {
+  document.querySelectorAll('.theme-opt').forEach(label => {
+    label.classList.toggle('selected', label.dataset.theme === theme);
+    label.querySelector('input').checked = (label.dataset.theme === theme);
+  });
+  const status = document.getElementById('themeStatus');
+  try {
+    const res = await fetch('/api/theme', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme }),
+    });
+    if (res.ok) {
+      status.textContent = '主題已儲存，點「↺ 更新投影片圖片」重新生圖';
+      status.style.color = '#d97706';
+      const btn = document.getElementById('refreshBtn');
+      if (btn) btn.classList.add('pending');
+    }
+  } catch {
+    status.textContent = '✗ 套用失敗';
+    status.style.color = '#dc2626';
+  }
+}
+
+async function refreshSlides() {
+  const btn = document.getElementById('refreshBtn');
+  const status = document.getElementById('themeStatus');
+  btn.disabled = true;
+  btn.textContent = '↺ 更新中…';
+  status.textContent = '';
+  try {
+    const res = await fetch('/api/refresh-slides', { method: 'POST' });
+    if (res.ok) {
+      reloadImages();
+      btn.classList.remove('pending');
+      status.textContent = '✓ 投影片圖片已更新';
+      status.style.color = '#059669';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    } else {
+      status.textContent = '✗ 更新失敗';
+      status.style.color = '#dc2626';
+    }
+  } catch {
+    status.textContent = '✗ 更新失敗';
+    status.style.color = '#dc2626';
+  }
+  btn.disabled = false;
+  btn.textContent = '↺ 更新投影片圖片';
+}
+
+function reloadImages() {
+  imageVersion = Date.now();
+  document.querySelectorAll('.thumb img').forEach(img => {
+    const base = img.src.split('?')[0];
+    img.src = base + '?v=' + imageVersion;
+  });
+  const mainImg = document.querySelector('.slide-image-wrap img');
+  if (mainImg) {
+    const base = mainImg.src.split('?')[0];
+    mainImg.src = base + '?v=' + imageVersion;
+  }
+}
 
 async function loadSlides() {
   const res = await fetch('/api/slides');
   const data = await res.json();
   slides = data.slides;
   document.getElementById('dirPath').textContent = data.dir;
+  initTheme(data.theme || 'tech-dark');
   renderSidebar();
   if (slides.length > 0) selectSlide(0);
 }
@@ -205,7 +404,7 @@ function renderSidebar() {
   const sb = document.getElementById('sidebar');
   sb.innerHTML = slides.map((s, i) => `
     <div class="thumb ${i === currentIdx ? 'active' : ''}" onclick="selectSlide(${i})" id="thumb-${i}">
-      <img src="/api/slide/${s.idx}/image" loading="lazy" />
+      <img src="/api/slide/${s.idx}/image?v=${imageVersion}" loading="lazy" />
       <div class="page-num">第 ${s.idx} 頁${unsaved.has(i) ? '<span class="unsaved-dot"></span>' : ''}</div>
       <div class="preview" id="preview-${i}">${s.narration || '（無旁白）'}</div>
     </div>
@@ -236,13 +435,13 @@ function selectSlide(i) {
   const s = slides[i];
   document.getElementById('editorPanel').innerHTML = `
     <div class="slide-image-wrap">
-      <img src="/api/slide/${s.idx}/image" alt="第 ${s.idx} 頁" />
+      <img src="/api/slide/${s.idx}/image?v=${imageVersion}" alt="第 ${s.idx} 頁" />
     </div>
     <div class="narration-section">
       <div class="narration-label">第 ${s.idx} 頁旁白</div>
       <textarea id="narration" oninput="onTextChange(${i})">${escapeHtml(s.narration || '')}</textarea>
       <div class="toolbar">
-        <button class="btn-save" id="saveBtn" onclick="saveFromBtn(${s.idx}, ${i})">儲存</button>
+        <button class="btn-save" id="saveBtn" onclick="saveFromBtn('${s.idx}', ${i})">儲存</button>
         <span class="char-count" id="charCount">${(s.narration || '').length} 字</span>
         <span class="save-status" id="saveStatus"></span>
       </div>
@@ -312,6 +511,38 @@ function navigate(dir) {
   if (next >= 0 && next < slides.length) selectSlide(next);
 }
 
+function toggleSettings() {
+  const panel = document.getElementById('settingsPanel');
+  const btn = document.getElementById('settingsBtn');
+  const visible = panel.style.display !== 'none';
+  panel.style.display = visible ? 'none' : 'flex';
+  btn.classList.toggle('active', !visible);
+}
+
+function onTtsChange() {
+  const tts = document.getElementById('settingTts').value;
+  document.getElementById('voiceGroup').style.display =
+    (tts === 'edge' || tts === 'azure') ? 'flex' : 'none';
+  document.getElementById('azureKeyGroup').style.display =
+    tts === 'azure' ? 'flex' : 'none';
+  document.getElementById('azureRegionGroup').style.display =
+    tts === 'azure' ? 'flex' : 'none';
+  if (tts === 'edge') document.getElementById('settingVoice').value = 'zh-TW-HsiaoChenNeural';
+}
+
+function getSettings() {
+  const tts = document.getElementById('settingTts').value;
+  const params = { tts, rate: document.getElementById('settingRate').value || '+0%' };
+  if (tts === 'edge') {
+    params.voice = document.getElementById('settingVoice').value;
+  } else if (tts === 'azure') {
+    params.voice = document.getElementById('settingVoice').value;
+    params.azure_key = document.getElementById('settingAzureKey').value;
+    params.azure_region = document.getElementById('settingAzureRegion').value;
+  }
+  return params;
+}
+
 async function generateVideo() {
   for (const i of unsaved) {
     const s = slides[i];
@@ -325,7 +556,11 @@ async function generateVideo() {
   status.textContent = '';
 
   try {
-    const res = await fetch('/api/generate', { method: 'POST' });
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(getSettings()),
+    });
     const data = await res.json();
     btn.disabled = false;
     btn.textContent = '▶ 生成影片';
@@ -369,6 +604,20 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def _read_theme(self) -> str:
+        slides_md = self.output_dir / "slides.md"
+        if slides_md.exists():
+            m = re.search(r'^theme:\s*(\S+)', slides_md.read_text(encoding="utf-8"), re.MULTILINE)
+            if m:
+                return m.group(1)
+        return "tech-dark"
+
+    def _write_theme(self, theme: str) -> None:
+        slides_md = self.output_dir / "slides.md"
+        content = slides_md.read_text(encoding="utf-8")
+        new_content = re.sub(r'^theme:\s*\S+', f'theme: {theme}', content, flags=re.MULTILINE)
+        slides_md.write_text(new_content, encoding="utf-8")
+
     def send_json(self, data, status=200):
         body = json.dumps(data, ensure_ascii=False).encode()
         self.send_response(status)
@@ -395,7 +644,11 @@ class Handler(BaseHTTPRequestHandler):
                 idx = nf.stem.split("_")[-1]
                 text = nf.read_text(encoding="utf-8").strip()
                 slides.append({"idx": idx, "narration": text})
-            self.send_json({"dir": str(self.output_dir), "slides": slides})
+            self.send_json({"dir": str(self.output_dir), "slides": slides,
+                            "theme": self._read_theme()})
+
+        elif path == "/api/theme":
+            self.send_json({"theme": self._read_theme()})
 
         elif path.startswith("/api/slide/") and path.endswith("/image"):
             idx = path.split("/")[3]
@@ -421,7 +674,15 @@ class Handler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
 
-        if path.startswith("/api/slide/") and path.endswith("/narration"):
+        if path == "/api/theme":
+            try:
+                theme = json.loads(body).get("theme", "tech-dark")
+                self._write_theme(theme)
+                self.send_json({"ok": True})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, status=500)
+
+        elif path.startswith("/api/slide/") and path.endswith("/narration"):
             idx = path.split("/")[3]
             try:
                 text = json.loads(body).get("text", "")
@@ -431,10 +692,40 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, status=500)
 
+        elif path == "/api/refresh-slides":
+            try:
+                cmd = [sys.executable, str(MAKE_VIDEO_PY), str(self.output_dir), "--marp-only"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+                if result.returncode == 0:
+                    self.send_json({"ok": True})
+                else:
+                    err = (result.stderr.strip().splitlines() or ["未知錯誤"])[-1]
+                    self.send_json({"ok": False, "error": err}, status=500)
+            except subprocess.TimeoutExpired:
+                self.send_json({"ok": False, "error": "逾時"}, status=500)
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, status=500)
+
         elif path == "/api/generate":
             try:
+                params = json.loads(body) if body else {}
+                tts = params.get("tts", "edge")
+                rate = params.get("rate", "+0%")
+                cmd = [sys.executable, str(MAKE_VIDEO_PY), str(self.output_dir),
+                       "--tts", tts, "--rate", rate]
+                if tts == "edge":
+                    voice = params.get("voice", "")
+                    if voice:
+                        cmd += ["--voice", voice]
+                elif tts == "azure":
+                    if params.get("azure_key"):
+                        cmd += ["--azure-key", params["azure_key"]]
+                    if params.get("azure_region"):
+                        cmd += ["--azure-region", params["azure_region"]]
+                    if params.get("voice"):
+                        cmd += ["--azure-voice", params["voice"]]
                 result = subprocess.run(
-                    [sys.executable, str(MAKE_VIDEO_PY), str(self.output_dir)],
+                    cmd,
                     capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0:

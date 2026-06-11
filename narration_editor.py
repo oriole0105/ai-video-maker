@@ -219,6 +219,17 @@ HTML = r"""<!DOCTYPE html>
   .btn-refresh.pending {
     background: #fffbeb; border-color: #f59e0b; color: #92400e; font-weight: 600;
   }
+  .step-chips { display: flex; gap: 5px; flex-wrap: wrap; }
+  .step-chip {
+    display: flex; align-items: center; padding: 3px 9px; border-radius: 4px;
+    border: 1px solid #e2e8f0; background: #f8fafc;
+    font-size: 11px; font-weight: 600; color: #94a3b8;
+    cursor: pointer; transition: all 0.15s; user-select: none;
+  }
+  .step-chip:has(input:checked) { border-color: #3b82f6; background: #eff6ff; color: #1d4ed8; }
+  .step-chip input[type=checkbox] { display: none; }
+  .page-only-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer; }
+  .page-only-row input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; accent-color: #3b82f6; }
 </style>
 </head>
 <body>
@@ -298,6 +309,21 @@ HTML = r"""<!DOCTYPE html>
   <div class="settings-group" id="azureRegionGroup" style="display:none">
     <span class="settings-label">Region</span>
     <input type="text" id="settingAzureRegion" value="eastasia" style="width:100px">
+  </div>
+  <div class="settings-group">
+    <span class="settings-label">執行步驟</span>
+    <div class="step-chips">
+      <label class="step-chip" title="旁白→語音"><input type="checkbox" id="step2" checked>TTS</label>
+      <label class="step-chip" title="圖+音→片段"><input type="checkbox" id="step3" checked>片段</label>
+      <label class="step-chip" title="串接所有片段"><input type="checkbox" id="step4" checked>合片</label>
+      <label class="step-chip" title="語音辨識字幕"><input type="checkbox" id="step5" checked>字幕</label>
+    </div>
+  </div>
+  <div class="settings-group">
+    <label class="page-only-row">
+      <input type="checkbox" id="pageOnly">
+      只處理目前頁（第 <span id="pageOnlyNum">—</span> 頁）
+    </label>
   </div>
 
 </div>
@@ -425,6 +451,8 @@ function selectSlide(i) {
 
   currentIdx = i;
   updateThumbActive();
+  const ponEl = document.getElementById('pageOnlyNum');
+  if (ponEl) ponEl.textContent = slides[i].idx;
 
   const thumb = document.getElementById('thumb-' + i);
   if (thumb) thumb.scrollIntoView({ block: 'nearest' });
@@ -539,6 +567,11 @@ function getSettings() {
     params.voice = document.getElementById('settingVoice').value;
     params.azure_key = document.getElementById('settingAzureKey').value;
     params.azure_region = document.getElementById('settingAzureRegion').value;
+  }
+  const selected = [2, 3, 4, 5].filter(n => document.getElementById('step' + n).checked);
+  params.steps = selected.length > 0 ? selected.join(',') : '2';
+  if (document.getElementById('pageOnly').checked && currentIdx !== null) {
+    params.page = slides[currentIdx].idx;
   }
   return params;
 }
@@ -711,8 +744,9 @@ class Handler(BaseHTTPRequestHandler):
                 params = json.loads(body) if body else {}
                 tts = params.get("tts", "edge")
                 rate = params.get("rate", "+0%")
+                steps = params.get("steps", "2,3,4,5")
                 cmd = [sys.executable, str(MAKE_VIDEO_PY), str(self.output_dir),
-                       "--tts", tts, "--rate", rate]
+                       "--tts", tts, "--rate", rate, "--steps", steps]
                 if tts == "edge":
                     voice = params.get("voice", "")
                     if voice:
@@ -724,18 +758,18 @@ class Handler(BaseHTTPRequestHandler):
                         cmd += ["--azure-region", params["azure_region"]]
                     if params.get("voice"):
                         cmd += ["--azure-voice", params["voice"]]
+                if params.get("page"):
+                    cmd += ["--page", str(params["page"])]
                 result = subprocess.run(
                     cmd,
                     capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0:
                     lines = result.stdout.strip().splitlines()
-                    # 相容中文版（大小：）和英文版（File size）輸出
                     summary = next(
-                        (l for l in reversed(lines)
-                         if "大小：" in l or "File size" in l),
-                        "完成"
-                    )
+                        (l for l in reversed(lines) if "大小：" in l or "File size" in l),
+                        None,
+                    ) or (lines[-1] if lines else "完成")
                     self.send_json({"success": True, "message": summary})
                 else:
                     err = (result.stderr.strip().splitlines() or ["未知錯誤"])[-1]

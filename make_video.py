@@ -429,13 +429,34 @@ def step_srt(output_dir: Path) -> Path:
 
 # ── 主程式 ────────────────────────────────────────────────────────────────────
 
+_STEP_NAMES = {1: "Marp", 2: "TTS", 3: "Segment", 4: "Concat", 5: "SRT"}
+
+
 def main():
-    parser = argparse.ArgumentParser(description="教學影片自動化工具")
+    parser = argparse.ArgumentParser(
+        description="教學影片自動化工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""步驟說明：
+  1=Marp（投影片→圖片）  2=TTS（旁白→語音）  3=Segment（圖+音→片段）
+  4=Concat（串接片段）   5=SRT（語音辨識字幕）
+
+常用組合：
+  --steps 1               只重新生成投影片圖片
+  --steps 2,3             只重跑 TTS + Segment（圖片不變）
+  --steps 4,5             只重新串接影片 + 字幕
+  --page 3 --steps 2,3    只更新第 3 頁語音與片段
+  --page 3 --steps 2,3,4,5  更新第 3 頁並重新產出完整影片""",
+    )
     parser.add_argument("output_dir", help="含 slides.md 和 narration_*.txt 的目錄")
+    parser.add_argument("--steps", default="1,2,3,4,5", metavar="N[,N...]",
+                        help="要執行的步驟，逗號分隔（預設：1,2,3,4,5）")
+    parser.add_argument("--page", type=int, metavar="N",
+                        help="只處理第 N 頁（套用至 TTS 和 Segment 步驟）")
+    # 保留舊 flag，向下相容
     parser.add_argument("--marp-only", action="store_true",
-                        help="只重新生成投影片圖片（Marp），不跑 TTS 或影片合成")
+                        help="等同 --steps 1（保留向下相容）")
     parser.add_argument("--concat-only", action="store_true",
-                        help="跳過 TTS，直接串接現有 segment_*.mp4（已有片段時使用）")
+                        help="等同 --steps 4,5（保留向下相容）")
     parser.add_argument("--tts", choices=["edge", "azure", "piper", "melo"],
                         default=os.environ.get("MAKE_VIDEO_TTS", "edge"),
                         help="TTS 後端：edge（預設）、azure、piper、melo")
@@ -443,7 +464,6 @@ def main():
                         help=f"Edge TTS 聲音（預設：{DEFAULT_VOICE}）")
     parser.add_argument("--rate", default=os.environ.get("MAKE_VIDEO_RATE", DEFAULT_RATE),
                         help="語速（預設：+0%%，加速可用 +20%%）")
-    # Azure TTS 選項
     parser.add_argument("--azure-key",
                         default=os.environ.get("AZURE_SPEECH_KEY", ""),
                         help="Azure Speech API key（或設 AZURE_SPEECH_KEY 環境變數）")
@@ -456,96 +476,113 @@ def main():
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
-
     if not output_dir.is_dir():
         print(f"錯誤：目錄不存在：{output_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # ── marp-only 模式 ────────────────────────────────────────────────────────
+    # ── 決定執行哪些步驟 ──────────────────────────────────────────────────────
     if args.marp_only:
-        if not (output_dir / "slides.md").exists():
-            print(f"錯誤：找不到 slides.md：{output_dir}", file=sys.stderr)
-            sys.exit(1)
-        step_marp(output_dir)
-        return
+        steps = {1}
+    elif args.concat_only:
+        steps = {4, 5}
+    else:
+        try:
+            steps = {int(s.strip()) for s in args.steps.split(",")}
+            if not steps.issubset({1, 2, 3, 4, 5}):
+                raise ValueError
+        except ValueError:
+            parser.error("--steps 只接受 1~5 的數字，以逗號分隔，例：--steps 2,3,4,5")
 
-    # ── concat-only 模式 ──────────────────────────────────────────────────────
-    if args.concat_only:
-        segments = sorted(output_dir.glob("segment_*.mp4"))
-        if not segments:
-            print(f"錯誤：找不到 segment_*.mp4，請先執行完整生成流程", file=sys.stderr)
-            sys.exit(1)
-        print("=== 合併模式（concat-only）===")
-        print(f"目錄：{output_dir}")
-        print(f"片段數：{len(segments)}")
-        print()
-        final = step_concat(output_dir, segments)
-        print()
-        srt = step_srt(output_dir)
-        print()
-        size = final.stat().st_size
-        size_str = f"{size / (1024**2):.1f} MB" if size >= 1024**2 else f"{size / 1024:.1f} KB"
-        print("=== 完成 ===")
-        print(f"影片：{final}")
-        print(f"大小：{size_str}")
-        return
-
-    # ── 完整流程 ──────────────────────────────────────────────────────────────
-    if not (output_dir / "slides.md").exists():
+    # ── 前置驗證 ──────────────────────────────────────────────────────────────
+    if 1 in steps and not (output_dir / "slides.md").exists():
         print(f"錯誤：找不到 slides.md：{output_dir}", file=sys.stderr)
         sys.exit(1)
 
-    narrations = find_narration_files(output_dir)
-    if not narrations:
-        print(f"錯誤：目錄中沒有 narration_*.txt：{output_dir}", file=sys.stderr)
-        sys.exit(1)
+    all_narrations = find_narration_files(output_dir)
 
-    if args.tts == "azure":
-        if not args.azure_key:
-            print("錯誤：--azure-key 必填（或設 AZURE_SPEECH_KEY 環境變數）", file=sys.stderr)
-            sys.exit(1)
-    elif args.tts == "edge" and not EDGE_TTS_BIN.exists():
+    if 2 in steps and args.tts == "azure" and not args.azure_key:
+        print("錯誤：--azure-key 必填（或設 AZURE_SPEECH_KEY 環境變數）", file=sys.stderr)
+        sys.exit(1)
+    if 2 in steps and args.tts == "edge" and not EDGE_TTS_BIN.exists():
         print("錯誤：找不到 edge-tts，請先執行 python setup.py", file=sys.stderr)
         sys.exit(1)
 
+    # ── 篩選頁面（只影響 TTS / Segment 步驟）────────────────────────────────
+    if args.page is not None:
+        page_str = f"{args.page:02d}"
+        narrations = [nf for nf in all_narrations if nf.stem == f"narration_{page_str}"]
+        if not narrations and (steps & {2, 3}):
+            print(f"錯誤：找不到 narration_{page_str}.txt：{output_dir}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        narrations = all_narrations
+        if not narrations and (steps & {2, 3}):
+            print(f"錯誤：目錄中沒有 narration_*.txt：{output_dir}", file=sys.stderr)
+            sys.exit(1)
+
+    # ── 印出執行摘要 ──────────────────────────────────────────────────────────
+    steps_label = " → ".join(_STEP_NAMES[s] for s in sorted(steps))
+    page_label = f"第 {args.page} 頁" if args.page else f"全部 {len(all_narrations)} 頁"
     print("=== make_video.py ===")
     print(f"目錄：{output_dir}")
-    print(f"頁數：{len(narrations)}")
-    if args.tts == "azure":
-        print(f"聲音：{args.azure_voice}  Region：{args.azure_region}  語速：{args.rate}")
-    else:
-        print(f"聲音：{args.voice}  語速：{args.rate}")
+    print(f"步驟：{steps_label}  頁面：{page_label}")
+    if 2 in steps:
+        if args.tts == "azure":
+            print(f"TTS ：azure  聲音：{args.azure_voice}  Region：{args.azure_region}  語速：{args.rate}")
+        else:
+            print(f"TTS ：{args.tts}  聲音：{args.voice}  語速：{args.rate}")
     print()
 
-    step_marp(output_dir)
-    print()
-    if args.tts == "azure":
-        step_tts_azure(output_dir, narrations,
-                       args.azure_key, args.azure_region,
-                       args.azure_voice, args.rate)
-    elif args.tts == "piper":
-        step_tts_piper(output_dir, narrations, args.rate)
-    elif args.tts == "melo":
-        step_tts_melo(output_dir, narrations)
-    else:
-        step_tts(output_dir, narrations, args.voice, args.rate)
-    print()
-    segments = step_segments(output_dir, narrations)
-    print()
-    if not segments:
-        print("錯誤：沒有產生任何影片片段", file=sys.stderr)
-        sys.exit(1)
-    final = step_concat(output_dir, segments)
-    print()
-    srt = step_srt(output_dir)
-    print()
+    # ── Step 1：Marp ─────────────────────────────────────────────────────────
+    if 1 in steps:
+        step_marp(output_dir)
+        print()
 
-    size = final.stat().st_size
-    size_str = f"{size / (1024**2):.1f} MB" if size >= 1024**2 else f"{size / 1024:.1f} KB"
+    # ── Step 2：TTS ──────────────────────────────────────────────────────────
+    if 2 in steps:
+        if args.tts == "azure":
+            step_tts_azure(output_dir, narrations,
+                           args.azure_key, args.azure_region,
+                           args.azure_voice, args.rate)
+        elif args.tts == "piper":
+            step_tts_piper(output_dir, narrations, args.rate)
+        elif args.tts == "melo":
+            step_tts_melo(output_dir, narrations)
+        else:
+            step_tts(output_dir, narrations, args.voice, args.rate)
+        print()
+
+    # ── Step 3：Segment ──────────────────────────────────────────────────────
+    if 3 in steps:
+        step_segments(output_dir, narrations)
+        print()
+
+    # ── Step 4：Concat（永遠掃 disk 上所有 segment，確保影片完整）────────────
+    if 4 in steps:
+        all_segs = sorted(output_dir.glob("segment_*.mp4"))
+        if not all_segs:
+            print("錯誤：找不到 segment_*.mp4，請先執行步驟 3", file=sys.stderr)
+            sys.exit(1)
+        final = step_concat(output_dir, all_segs)
+        print()
+
+    # ── Step 5：SRT ──────────────────────────────────────────────────────────
+    if 5 in steps:
+        srt = step_srt(output_dir)
+        print()
+
+    # ── 完成摘要 ─────────────────────────────────────────────────────────────
     print("=== 完成 ===")
-    print(f"影片：{final}")
-    print(f"字幕：{srt}")
-    print(f"大小：{size_str}")
+    if 4 in steps:
+        final = output_dir / "final.mp4"
+        size = final.stat().st_size
+        size_str = f"{size / (1024**2):.1f} MB" if size >= 1024**2 else f"{size / 1024:.1f} KB"
+        print(f"影片：{final}")
+        if 5 in steps:
+            print(f"字幕：{output_dir / 'final.srt'}")
+        print(f"大小：{size_str}")
+    else:
+        print(f"步驟 {steps_label} 已完成。")
 
 
 if __name__ == "__main__":

@@ -174,6 +174,41 @@ def get_duration(path: Path) -> float:
     return float(r.stdout.strip())
 
 
+def _ffmpeg_static_segment(img: Path, audio: Path, seg: Path) -> None:
+    run([
+        "ffmpeg", "-y", "-loop", "1",
+        "-i", str(img), "-i", str(audio),
+        "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+        "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
+               "pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+        "-c:a", "aac", "-b:a", "192k",
+        "-shortest", str(seg),
+    ])
+
+
+def render_remotion_slide(tsx_path: Path, audio_path: Path, seg_path: Path) -> None:
+    """Render one animated slide via Remotion (node remotion_render.js)."""
+    render_script = SCRIPT_DIR / "remotion_render.js"
+    if not render_script.exists():
+        raise FileNotFoundError(
+            f"remotion_render.js 未找到。請確認 {SCRIPT_DIR}/remotion/ 目錄已執行 npm install"
+        )
+    cmd = [
+        "node", str(render_script),
+        "--tsx", str(tsx_path),
+        "--audio", str(audio_path),
+        "--output", str(seg_path),
+    ]
+    result = subprocess.run(cmd, text=True, capture_output=True)
+    for line in (result.stdout or "").strip().splitlines():
+        print(f"    {line}")
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Remotion render 失敗 (exit {result.returncode}):\n"
+            + (result.stderr or result.stdout or "")[-600:]
+        )
+
+
 def find_narration_files(d: Path) -> list[Path]:
     return sorted(d.glob("narration_*.txt"))
 
@@ -335,32 +370,40 @@ def step_tts(output_dir: Path, narrations: list[Path], voice: str, rate: str) ->
 
 
 def step_segments(output_dir: Path, narrations: list[Path]) -> list[Path]:
-    print("[3/5] 每頁合成影片片段（FFmpeg）...")
+    print("[3/5] 每頁合成影片片段...")
     segments = []
     for nf in narrations:
         idx = nf.stem.split("_")[-1]
         n = int(idx)
-        img = output_dir / f"slides.{n:03d}.png"
+        tsx  = output_dir / f"slide_{n:02d}.tsx"
+        img  = output_dir / f"slides.{n:03d}.png"
         audio = find_audio(output_dir, idx)
-        seg = output_dir / f"segment_{idx}.mp4"
+        seg  = output_dir / f"segment_{idx}.mp4"
 
-        if not img.exists():
-            print(f"  警告：找不到 {img.name}，跳過")
-            continue
         if audio is None:
             print(f"  警告：找不到 audio_{idx}，跳過")
             continue
 
-        print(f"  生成 segment_{idx}.mp4 ...")
-        run([
-            "ffmpeg", "-y", "-loop", "1",
-            "-i", str(img), "-i", str(audio),
-            "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
-            "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
-                   "pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", str(seg),
-        ])
+        if tsx.exists():
+            # ── Remotion 動畫路徑 ──────────────────────────────
+            print(f"  [Remotion] 動畫渲染 slide_{n:02d}.tsx → segment_{idx}.mp4 ...")
+            try:
+                render_remotion_slide(tsx, audio, seg)
+            except Exception as e:
+                print(f"  Remotion 渲染失敗，fallback 靜態 PNG: {e}", file=sys.stderr)
+                if img.exists():
+                    _ffmpeg_static_segment(img, audio, seg)
+                else:
+                    print(f"  跳過 segment_{idx}（無可用的 PNG fallback）", file=sys.stderr)
+                    continue
+        else:
+            # ── 靜態 PNG 路徑（原有流程）─────────────────────────
+            if not img.exists():
+                print(f"  警告：找不到 {img.name}，跳過")
+                continue
+            print(f"  生成 segment_{idx}.mp4 ...")
+            _ffmpeg_static_segment(img, audio, seg)
+
         segments.append(seg)
     print("  完成。")
     return segments

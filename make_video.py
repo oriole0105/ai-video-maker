@@ -193,39 +193,30 @@ def step_marp(output_dir: Path) -> int:
     themes_dir = SCRIPT_DIR / "themes"
     theme_args = ["--theme-set", str(themes_dir)] if themes_dir.is_dir() else []
 
-    # Marp v4.x 不渲染最後一頁（已知行為）。在末尾補一個空白分頁當「犧牲頁」，
-    # Marp 丟掉空白頁後，所有真實頁面都能正常輸出。使用 temp file 避免修改原檔。
     slides_md = output_dir / "slides.md"
-    content = slides_md.read_text(encoding="utf-8")
-    tmp_md = output_dir / "_slides_tmp.md"
-    tmp_md.write_text(content + "\n---\n", encoding="utf-8")
-
+    base = _marp_exe() + [str(slides_md), "--allow-local-files"] + theme_args
     try:
-        base = _marp_exe() + [str(tmp_md), "--allow-local-files"] + theme_args
-        try:
-            p_png = subprocess.Popen(
-                base + ["--images", "png", "--image-scale", "2",
-                        "-o", str(output_dir / "slides.png")],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            )
-            p_pdf = subprocess.Popen(
-                base + ["--pdf", "-o", str(output_dir / "slides.pdf")],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            )
-        except FileNotFoundError:
-            print("  錯誤：找不到 marp，請確認已安裝 @marp-team/marp-cli", file=sys.stderr)
-            print("  Windows 請先安裝 Node.js，再執行：npm install -g @marp-team/marp-cli", file=sys.stderr)
-            sys.exit(1)
+        p_png = subprocess.Popen(
+            base + ["--images", "png", "--image-scale", "2",
+                    "-o", str(output_dir / "slides.png")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        p_pdf = subprocess.Popen(
+            base + ["--pdf", "-o", str(output_dir / "slides.pdf")],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+    except FileNotFoundError:
+        print("  錯誤：找不到 marp，請確認已安裝 @marp-team/marp-cli", file=sys.stderr)
+        print("  Windows 請先安裝 Node.js，再執行：npm install -g @marp-team/marp-cli", file=sys.stderr)
+        sys.exit(1)
 
-        for p, label in [(p_png, "PNG"), (p_pdf, "PDF")]:
-            _, stderr = p.communicate()
-            if p.returncode != 0:
-                print(f"  錯誤：Marp {label} 生成失敗", file=sys.stderr)
-                if stderr:
-                    print(f"  {stderr.strip()}", file=sys.stderr)
-                sys.exit(1)
-    finally:
-        tmp_md.unlink(missing_ok=True)
+    for p, label in [(p_png, "PNG"), (p_pdf, "PDF")]:
+        _, stderr = p.communicate()
+        if p.returncode != 0:
+            print(f"  錯誤：Marp {label} 生成失敗", file=sys.stderr)
+            if stderr:
+                print(f"  {stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
 
     count = len(sorted(output_dir.glob("slides.*.png")))
     print(f"  完成，共 {count} 張圖片，已同步產生 slides.pdf。")

@@ -45,6 +45,10 @@ HTML = r"""<!DOCTYPE html>
   header .title { font-weight: 700; font-size: 16px; white-space: nowrap; }
   header .dir-path { font-size: 12px; opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   header .right { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
+  .tab-bar { display: flex; gap: 2px; background: rgba(255,255,255,0.12); border-radius: 6px; padding: 3px; }
+  .tab-btn { padding: 4px 16px; border-radius: 4px; border: none; background: transparent; color: rgba(255,255,255,0.65); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+  .tab-btn.active { background: white; color: #1e40af; font-weight: 600; }
+  .tab-btn:hover:not(.active) { background: rgba(255,255,255,0.18); color: white; }
 
   .main { display: flex; flex: 1; overflow: hidden; }
 
@@ -230,23 +234,47 @@ HTML = r"""<!DOCTYPE html>
   .step-chip input[type=checkbox] { display: none; }
   .page-only-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #374151; cursor: pointer; }
   .page-only-row input[type=checkbox] { width: 14px; height: 14px; cursor: pointer; accent-color: #3b82f6; }
+  /* Slide MD editor tab */
+  #tabNarration { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  #tabSlide { flex: 1; overflow: hidden; display: none; flex-direction: column; }
+  #slideMdEditor {
+    flex: 1; width: 100%; padding: 20px 28px;
+    font-family: "SF Mono", "Fira Code", Consolas, "Courier New", monospace;
+    font-size: 13px; line-height: 1.75; border: none; resize: none; outline: none;
+    background: #fdfdfd; color: #1e293b; tab-size: 2;
+    border-top: 1px solid #e5e7eb;
+  }
+  .slide-unsaved { color: #f59e0b; font-size: 12px; font-weight: 600; }
 </style>
 </head>
 <body>
 
 <header>
-  <div style="display:flex; align-items:center; gap:12px; overflow:hidden;">
-    <span class="title">旁白編輯器</span>
+  <div style="display:flex; align-items:center; gap:12px; overflow:hidden; flex-shrink:0;">
+    <span class="title">製作工作台</span>
     <span class="dir-path" id="dirPath"></span>
   </div>
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tabBtnNarration" onclick="switchTab('narration')">旁白</button>
+    <button class="tab-btn" id="tabBtnSlide" onclick="switchTab('slide')">投影片</button>
+  </div>
   <div class="right">
-    <div class="nav-btns">
-      <button class="btn-nav" id="prevBtn" onclick="navigate(-1)" disabled>‹ 上一頁</button>
-      <button class="btn-nav" id="nextBtn" onclick="navigate(1)" disabled>下一頁 ›</button>
+    <div id="headerNarration" style="display:flex; align-items:center; gap:8px;">
+      <div class="nav-btns">
+        <button class="btn-nav" id="prevBtn" onclick="navigate(-1)" disabled>‹ 上一頁</button>
+        <button class="btn-nav" id="nextBtn" onclick="navigate(1)" disabled>下一頁 ›</button>
+      </div>
+      <span class="gen-status" id="genStatus"></span>
+      <button class="btn-settings" id="settingsBtn" onclick="toggleSettings()">⚙ 設定</button>
+      <button class="btn-generate" id="genBtn" onclick="generateVideo()">▶ 生成影片</button>
     </div>
-    <span class="gen-status" id="genStatus"></span>
-    <button class="btn-settings" id="settingsBtn" onclick="toggleSettings()">⚙ 設定</button>
-    <button class="btn-generate" id="genBtn" onclick="generateVideo()">▶ 生成影片</button>
+    <div id="headerSlide" style="display:none; align-items:center; gap:8px;">
+      <span class="slide-unsaved" id="slideMdUnsaved" style="display:none">● 未儲存</span>
+      <span class="gen-status" id="slideStatus"></span>
+      <button class="btn-settings" onclick="toggleSettings()">⚙ 設定</button>
+      <button class="btn-nav" id="slideSaveBtn" onclick="saveSlideMd(false)">儲存</button>
+      <button class="btn-generate" id="slideRefreshBtn" onclick="saveSlideMd(true)">↺ 儲存並更新圖片</button>
+    </div>
   </div>
 </header>
 
@@ -328,14 +356,21 @@ HTML = r"""<!DOCTYPE html>
 
 </div>
 
-<div class="main">
-  <div class="sidebar" id="sidebar"></div>
-  <div class="editor-panel" id="editorPanel">
-    <div class="empty-state">
-      <div style="font-size: 48px; margin-bottom: 12px;">←</div>
-      <div>點選左側投影片開始編輯</div>
+<div id="tabNarration">
+  <div class="main">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="editor-panel" id="editorPanel">
+      <div class="empty-state">
+        <div style="font-size: 48px; margin-bottom: 12px;">←</div>
+        <div>點選左側投影片開始編輯</div>
+      </div>
     </div>
   </div>
+</div>
+
+<div id="tabSlide">
+  <textarea id="slideMdEditor" spellcheck="false"
+    placeholder="載入中…" oninput="onSlideMdChange()"></textarea>
 </div>
 
 <script>
@@ -343,6 +378,78 @@ let slides = [];
 let currentIdx = null;
 let unsaved = new Set();
 let imageVersion = Date.now();
+let currentTab = 'narration';
+let slideMdOriginal = '';
+let slideMdDirty = false;
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tabNarration').style.display = tab === 'narration' ? 'flex' : 'none';
+  document.getElementById('tabSlide').style.display = tab === 'slide' ? 'flex' : 'none';
+  document.getElementById('tabBtnNarration').classList.toggle('active', tab === 'narration');
+  document.getElementById('tabBtnSlide').classList.toggle('active', tab === 'slide');
+  document.getElementById('headerNarration').style.display = tab === 'narration' ? 'flex' : 'none';
+  document.getElementById('headerSlide').style.display = tab === 'slide' ? 'flex' : 'none';
+  document.getElementById('settingsPanel').style.display = 'none';
+  if (tab === 'slide' && !slideMdOriginal) loadSlideMd();
+}
+
+async function loadSlideMd() {
+  const res = await fetch('/api/slides-md');
+  const data = await res.json();
+  slideMdOriginal = data.content;
+  document.getElementById('slideMdEditor').value = slideMdOriginal;
+  slideMdDirty = false;
+  document.getElementById('slideMdUnsaved').style.display = 'none';
+}
+
+function onSlideMdChange() {
+  slideMdDirty = document.getElementById('slideMdEditor').value !== slideMdOriginal;
+  document.getElementById('slideMdUnsaved').style.display = slideMdDirty ? 'inline' : 'none';
+}
+
+async function saveSlideMd(andRefresh) {
+  const content = document.getElementById('slideMdEditor').value;
+  const status = document.getElementById('slideStatus');
+  const saveBtn = document.getElementById('slideSaveBtn');
+  const refreshBtn = document.getElementById('slideRefreshBtn');
+  if (saveBtn) saveBtn.disabled = true;
+  if (refreshBtn) refreshBtn.disabled = true;
+  status.textContent = '儲存中…';
+  status.className = 'gen-status';
+  try {
+    const res = await fetch('/api/slides-md', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw new Error('儲存失敗');
+    slideMdOriginal = content;
+    slideMdDirty = false;
+    document.getElementById('slideMdUnsaved').style.display = 'none';
+    if (andRefresh) {
+      status.textContent = '更新圖片中…';
+      const r2 = await fetch('/api/refresh-slides', { method: 'POST' });
+      if (r2.ok) {
+        await loadSlides();
+        status.textContent = '✓ 已儲存並更新圖片';
+        status.className = 'gen-status success';
+      } else {
+        status.textContent = '✗ 圖片更新失敗';
+        status.className = 'gen-status error';
+      }
+    } else {
+      status.textContent = '✓ 已儲存';
+      status.className = 'gen-status success';
+    }
+  } catch (e) {
+    status.textContent = '✗ ' + e.message;
+    status.className = 'gen-status error';
+  }
+  if (saveBtn) saveBtn.disabled = false;
+  if (refreshBtn) refreshBtn.disabled = false;
+  setTimeout(() => { status.textContent = ''; status.className = 'gen-status'; }, 3000);
+}
 
 function initTheme(current) {
   document.querySelectorAll('.theme-opt').forEach(label => {
@@ -616,7 +723,11 @@ document.addEventListener('keydown', (e) => {
   if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') {
     if ((e.key === 's' || e.key === 'S') && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
-      if (currentIdx !== null) saveFromBtn(slides[currentIdx].idx, currentIdx);
+      if (currentTab === 'slide') {
+        saveSlideMd(false);
+      } else if (currentIdx !== null) {
+        saveFromBtn(slides[currentIdx].idx, currentIdx);
+      }
     }
     return;
   }
@@ -680,6 +791,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"dir": str(self.output_dir), "slides": slides,
                             "theme": self._read_theme()})
 
+        elif path == "/api/slides-md":
+            try:
+                content = (self.output_dir / "slides.md").read_text(encoding="utf-8")
+                self.send_json({"content": content})
+            except Exception as e:
+                self.send_json({"content": "", "error": str(e)})
+
         elif path == "/api/theme":
             self.send_json({"theme": self._read_theme()})
 
@@ -707,7 +825,15 @@ class Handler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
 
-        if path == "/api/theme":
+        if path == "/api/slides-md":
+            try:
+                content = json.loads(body).get("content", "")
+                (self.output_dir / "slides.md").write_text(content, encoding="utf-8")
+                self.send_json({"ok": True})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, status=500)
+
+        elif path == "/api/theme":
             try:
                 theme = json.loads(body).get("theme", "tech-dark")
                 self._write_theme(theme)

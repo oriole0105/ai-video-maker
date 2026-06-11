@@ -87,7 +87,7 @@ HTML = r"""<!DOCTYPE html>
     flex-direction: column;
     padding: 20px;
     gap: 14px;
-    overflow: hidden;
+    overflow-y: auto;
   }
   .empty-state {
     margin: auto;
@@ -245,6 +245,63 @@ HTML = r"""<!DOCTYPE html>
     border-top: 1px solid #e5e7eb;
   }
   .slide-unsaved { color: #f59e0b; font-size: 12px; font-weight: 600; }
+
+  /* ── Remotion 動畫模式 ─────────────────────────────────────────── */
+  .anim-badge {
+    display: inline-block; font-size: 9px; font-weight: 700;
+    background: #7c3aed; color: white; border-radius: 3px;
+    padding: 1px 5px; margin-left: 4px; vertical-align: middle; letter-spacing: 0.04em;
+  }
+  .mode-bar {
+    display: flex; gap: 0; border-radius: 6px; overflow: hidden;
+    border: 1px solid #d1d5db; flex-shrink: 0; align-self: flex-start;
+  }
+  .mode-btn {
+    padding: 5px 16px; border: none; background: white; font-size: 12px;
+    font-weight: 500; cursor: pointer; color: #6b7280; transition: all 0.15s;
+  }
+  .mode-btn:hover:not(.mode-active) { background: #f3f4f6; }
+  .mode-btn.mode-active { background: #7c3aed; color: white; font-weight: 600; }
+  .mode-btn.mode-active.static { background: #2563eb; }
+
+  .tsx-section {
+    border: 1px solid #e9d5ff; border-radius: 8px;
+    background: #faf5ff; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 10px; flex-shrink: 0;
+  }
+  .tsx-label { font-size: 12px; font-weight: 600; color: #6d28d9; }
+  .tsx-editor {
+    font-family: "SF Mono","Fira Code",Consolas,"Courier New",monospace;
+    font-size: 12px; line-height: 1.6; height: 200px; border: 1px solid #ddd6fe;
+    border-radius: 5px; background: #fefefe; color: #1e1b4b; tab-size: 2;
+    resize: vertical;
+  }
+  .tsx-editor:focus { outline: none; border-color: #7c3aed; box-shadow: 0 0 0 3px #ede9fe; }
+  .tsx-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .btn-tsx-save { background: #7c3aed; color: white; padding: 5px 14px; font-size: 12px; }
+  .btn-tsx-save:hover { background: #6d28d9; }
+  .btn-tsx-del { background: white; color: #dc2626; border: 1px solid #fca5a5; padding: 5px 12px; font-size: 12px; }
+  .btn-tsx-del:hover { background: #fef2f2; }
+  .btn-ai { background: #0ea5e9; color: white; padding: 5px 14px; font-size: 12px; }
+  .btn-ai:hover { background: #0284c7; }
+  .tsx-save-status { font-size: 12px; color: #059669; }
+
+  .ai-panel {
+    border-top: 1px solid #ddd6fe; padding-top: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .ai-label { font-size: 12px; font-weight: 600; color: #0369a1; }
+  .ai-hint { font-size: 11px; color: #64748b; }
+  .ai-desc { height: 70px; border: 1px solid #bae6fd; border-radius: 5px; background: #f0f9ff; font-size: 13px; }
+  .ai-desc:focus { outline: none; border-color: #0ea5e9; }
+  .ai-tsx-input { height: 120px; border: 1px solid #bae6fd; border-radius: 5px; background: #f0f9ff;
+    font-family: "SF Mono","Fira Code",Consolas,"Courier New",monospace; font-size: 12px; }
+  .ai-tsx-input:focus { outline: none; border-color: #0ea5e9; }
+  .btn-copy-prompt { background: #0369a1; color: white; padding: 5px 14px; font-size: 12px; }
+  .btn-copy-prompt:hover { background: #075985; }
+  .btn-apply-tsx { background: #059669; color: white; padding: 5px 14px; font-size: 12px; }
+  .btn-apply-tsx:hover { background: #047857; }
+  .copy-done { font-size: 11px; color: #059669; }
 </style>
 </head>
 <body>
@@ -538,7 +595,7 @@ function renderSidebar() {
   sb.innerHTML = slides.map((s, i) => `
     <div class="thumb ${i === currentIdx ? 'active' : ''}" onclick="selectSlide(${i})" id="thumb-${i}">
       <img src="/api/slide/${s.idx}/image?v=${imageVersion}" loading="lazy" />
-      <div class="page-num">第 ${s.idx} 頁${unsaved.has(i) ? '<span class="unsaved-dot"></span>' : ''}</div>
+      <div class="page-num">第 ${s.idx} 頁${unsaved.has(i) ? '<span class="unsaved-dot"></span>' : ''}${s.hasAnimation ? '<span class="anim-badge">動畫</span>' : ''}</div>
       <div class="preview" id="preview-${i}">${s.narration || '（無旁白）'}</div>
     </div>
   `).join('');
@@ -568,9 +625,18 @@ function selectSlide(i) {
   document.getElementById('nextBtn').disabled = i === slides.length - 1;
 
   const s = slides[i];
+  const hasAnim = !!s.hasAnimation;
+  const padded = String(parseInt(s.idx)).padStart(2, '0');
   document.getElementById('editorPanel').innerHTML = `
-    <div class="slide-image-wrap">
+    <div class="slide-image-wrap" style="${hasAnim ? 'max-height:220px' : ''}">
       <img src="/api/slide/${s.idx}/image?v=${imageVersion}" alt="第 ${s.idx} 頁" />
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <div class="mode-bar">
+        <button class="mode-btn static ${!hasAnim ? 'mode-active' : ''}" onclick="setMode('${s.idx}',${i},false)">靜態</button>
+        <button class="mode-btn ${hasAnim ? 'mode-active' : ''}" onclick="setMode('${s.idx}',${i},true)">✦ 動畫</button>
+      </div>
+      ${hasAnim ? `<span style="font-size:11px;color:#6d28d9">slide_${padded}.tsx</span>` : ''}
     </div>
     <div class="narration-section">
       <div class="narration-label">第 ${s.idx} 頁旁白</div>
@@ -581,12 +647,225 @@ function selectSlide(i) {
         <span class="save-status" id="saveStatus"></span>
       </div>
     </div>
+    <div class="tsx-section" id="tsxSection" style="${hasAnim ? '' : 'display:none'}">
+      <div class="tsx-label">✦ Remotion 動畫程式碼</div>
+      <textarea id="tsxEditor" class="tsx-editor" placeholder="載入中..."></textarea>
+      <div class="tsx-toolbar">
+        <button class="btn-tsx-save" onclick="saveTsx('${s.idx}',${i})">儲存 TSX</button>
+        <button class="btn-tsx-del" onclick="deleteTsx('${s.idx}',${i})">✕ 切回靜態</button>
+        <button class="btn-ai" onclick="toggleAiPanel()">✨ AI 生成</button>
+        <span class="tsx-save-status" id="tsxStatus"></span>
+      </div>
+      <div class="ai-panel" id="aiPanel" style="display:none">
+        <div class="ai-label">描述你想要的動畫效果</div>
+        <textarea id="aiDesc" class="ai-desc" placeholder="例如：條列點逐一從左側飛入，配合旁白節奏分散出現，背景用 warm-amber 主題色..."></textarea>
+        <div class="tsx-toolbar">
+          <button class="btn-copy-prompt" onclick="copyPrompt('${s.idx}')">複製提示詞</button>
+          <span class="copy-done" id="copyDone" style="display:none">✓ 已複製！貼到 Claude / ChatGPT 取得 TSX</span>
+        </div>
+        <div class="ai-label" style="margin-top:4px">貼入 AI 生成的 TSX 程式碼</div>
+        <textarea id="aiTsxInput" class="ai-tsx-input" placeholder="貼入 AI 回傳的完整 .tsx 程式碼..."></textarea>
+        <div class="tsx-toolbar">
+          <button class="btn-apply-tsx" onclick="applyAiTsx()">套用到編輯器</button>
+          <span class="ai-hint">套用後點「儲存 TSX」寫入磁碟</span>
+        </div>
+      </div>
+    </div>
   `;
   document.getElementById('narration').focus();
+  if (hasAnim) loadTsx(s.idx);
 }
 
 function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Remotion 動畫模式 ─────────────────────────────────────────────────
+
+const TSX_TEMPLATE = (idx) => {
+  const padded = String(parseInt(idx)).padStart(2, '0');
+  return `// slide_${padded}.tsx — Remotion 動畫投影片
+// 請根據投影片內容修改，或用「AI 生成」功能取得客製化動畫
+import React from 'react'
+import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from 'remotion'
+
+interface Props {
+  audioPath: string
+  durationFrames: number  // 由旁白時長決定，勿寫死
+  fps: number
+  width?: number
+  height?: number
+}
+
+// 動畫出現時機：依旁白時長的比例計算（0.0 ~ 1.0）
+const CUES = [0.15, 0.40, 0.65]
+
+const Slide: React.FC<Props> = ({ durationFrames }) => {
+  const frame = useCurrentFrame()
+  const { fps } = useVideoConfig()
+
+  const titleIn = spring({ frame, fps, config: { damping: 200, stiffness: 120, mass: 0.5 }, durationInFrames: 20 })
+
+  const itemsIn = CUES.map(cue => spring({
+    frame: Math.max(0, frame - Math.round(durationFrames * cue)),
+    fps,
+    config: { damping: 180, stiffness: 90, mass: 0.6 },
+    durationInFrames: 20,
+  }))
+
+  return (
+    <AbsoluteFill style={{ background: 'linear-gradient(160deg, #1c1208 0%, #2d1f0a 100%)',
+      fontFamily: '"Noto Sans TC", "PingFang TC", system-ui, sans-serif', color: '#f0e6d3', overflow: 'hidden' }}>
+      <div style={{ padding: '80px 120px', paddingTop: 100, display: 'flex', flexDirection: 'column', gap: 32 }}>
+        <h1 style={{ fontSize: 72, fontWeight: 700, color: '#f59e0b',
+          borderBottom: '2px solid #f59e0b', paddingBottom: 16,
+          opacity: titleIn, transform: \`translateY(\${interpolate(titleIn,[0,1],[50,0])}px)\` }}>
+          標題文字
+        </h1>
+        {['項目一', '項目二', '項目三'].map((text, i) => (
+          <div key={i} style={{ fontSize: 40, opacity: itemsIn[i],
+            transform: \`translateX(\${interpolate(itemsIn[i],[0,1],[-40,0])}px)\` }}>
+            • {text}
+          </div>
+        ))}
+      </div>
+      <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 5,
+        background: 'linear-gradient(90deg, #f59e0b, #fcd34d, #f59e0b)',
+        transformOrigin: 'left center', transform: \`scaleX(\${titleIn})\` }} />
+    </AbsoluteFill>
+  )
+}
+export default Slide
+`;
+};
+
+async function setMode(idx, slideIdx, toAnimation) {
+  if (toAnimation) {
+    // 建立空白 TSX 模板
+    const template = TSX_TEMPLATE(idx);
+    const res = await fetch('/api/slide/' + idx + '/tsx', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({content: template}),
+    });
+    if (res.ok) {
+      slides[slideIdx].hasAnimation = true;
+      renderSidebar();
+      selectSlide(slideIdx);
+    }
+  } else {
+    if (!confirm('切回靜態模式會刪除 slide_' + String(parseInt(idx)).padStart(2,'0') + '.tsx，確定？')) return;
+    await deleteTsx(idx, slideIdx);
+  }
+}
+
+async function loadTsx(idx) {
+  const res = await fetch('/api/slide/' + idx + '/tsx');
+  const data = await res.json();
+  const ta = document.getElementById('tsxEditor');
+  if (ta) ta.value = data.content || '';
+}
+
+async function saveTsx(idx, slideIdx) {
+  const ta = document.getElementById('tsxEditor');
+  if (!ta) return;
+  const res = await fetch('/api/slide/' + idx + '/tsx', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({content: ta.value}),
+  });
+  const statusEl = document.getElementById('tsxStatus');
+  if (res.ok) {
+    if (statusEl) { statusEl.textContent = '✓ 已儲存'; setTimeout(() => { if(statusEl) statusEl.textContent=''; }, 2000); }
+    slides[slideIdx].hasAnimation = true;
+    renderSidebar();
+  } else {
+    if (statusEl) statusEl.textContent = '✗ 儲存失敗';
+  }
+}
+
+async function deleteTsx(idx, slideIdx) {
+  const res = await fetch('/api/slide/' + idx + '/tsx', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({delete: true}),
+  });
+  if (res.ok) {
+    slides[slideIdx].hasAnimation = false;
+    renderSidebar();
+    selectSlide(slideIdx);
+  }
+}
+
+function toggleAiPanel() {
+  const p = document.getElementById('aiPanel');
+  if (p) p.style.display = p.style.display === 'none' ? '' : 'none';
+}
+
+function applyAiTsx() {
+  const src = document.getElementById('aiTsxInput');
+  const dst = document.getElementById('tsxEditor');
+  if (src && dst && src.value.trim()) {
+    dst.value = src.value.trim();
+    src.value = '';
+    const p = document.getElementById('aiPanel');
+    if (p) p.style.display = 'none';
+  }
+}
+
+async function copyPrompt(idx) {
+  const s = slides.find(x => x.idx === idx);
+  const narration = s ? (s.narration || '') : '';
+  const desc = (document.getElementById('aiDesc') || {}).value || '';
+  const themeColors = {
+    'warm-amber':    { bg: 'linear-gradient(160deg, #1c1208 0%, #2d1f0a 100%)', text: '#f0e6d3', accent: '#f59e0b', sub: '#fcd34d' },
+    'tech-dark':     { bg: 'linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)', text: '#e2e8f0', accent: '#6366f1', sub: '#818cf8' },
+    'clean-light':   { bg: '#ffffff', text: '#1e293b', accent: '#2563eb', sub: '#3b82f6' },
+    'corporate-navy':{ bg: '#f0f4f8', text: '#1e293b', accent: '#1e3a5f', sub: '#2d5986' },
+  };
+  const c = themeColors[currentTheme] || themeColors['tech-dark'];
+  const padded = String(parseInt(idx)).padStart(2, '0');
+
+  // 從 slides.md 擷取該頁內容
+  let slideMdSection = '（請參考 slides.md 中第 ' + idx + ' 頁的內容）';
+  if (slideMdOriginal) {
+    const parts = slideMdOriginal.split(/\n---\n/);
+    const n = parseInt(idx);
+    if (parts.length > n) slideMdSection = parts[n].trim();
+  }
+
+  const prompt = `你是一個 Remotion 動畫開發者。請根據以下投影片內容、旁白和主題色系，生成一個完整的 Remotion React component（.tsx 格式）。
+
+## 投影片內容（第 ${idx} 頁）
+${slideMdSection}
+
+## 旁白文字（約 ${Math.round(narration.length * 0.065)} 秒）
+${narration}
+
+## 主題色系（${currentTheme}）
+- 背景：${c.bg}
+- 主文字：${c.text}
+- 強調色：${c.accent}
+- 副強調色：${c.sub}
+- 字型：Noto Sans TC, PingFang TC, system-ui, sans-serif
+
+## 使用者描述的動畫效果
+${desc || '（未描述，請根據投影片內容與旁白節奏自由設計）'}
+
+## 技術規格（必須遵守）
+1. Props 介面：{ audioPath: string, durationFrames: number, fps: number, width?: number, height?: number }
+2. 動畫觸發時間點必須以 durationFrames 的比例計算（如 Math.round(durationFrames * 0.25)），禁止寫死幀號
+3. 可使用的 Remotion API：useCurrentFrame, useVideoConfig, interpolate, spring, AbsoluteFill, Sequence
+4. export default Slide（最後一行）
+5. 輸出完整 .tsx 內容，不要加 markdown 代碼塊包裹
+6. style 中計算動態數值請用字串拼接：'translateY(' + value + 'px)'，避免在 JSX 屬性值裡用反引號
+
+請直接輸出完整的 TSX 程式碼，無需說明：`;
+
+  try {
+    await navigator.clipboard.writeText(prompt);
+    const el = document.getElementById('copyDone');
+    if (el) { el.style.display = ''; setTimeout(() => { if(el) el.style.display='none'; }, 4000); }
+  } catch(e) {
+    prompt && window.prompt('複製以下提示詞：', prompt);
+  }
 }
 
 function onTextChange(i) {
@@ -787,7 +1066,8 @@ class Handler(BaseHTTPRequestHandler):
             for nf in narration_files:
                 idx = nf.stem.split("_")[-1]
                 text = nf.read_text(encoding="utf-8").strip()
-                slides.append({"idx": idx, "narration": text})
+                tsx = self.output_dir / f"slide_{int(idx):02d}.tsx"
+                slides.append({"idx": idx, "narration": text, "hasAnimation": tsx.exists()})
             self.send_json({"dir": str(self.output_dir), "slides": slides,
                             "theme": self._read_theme()})
 
@@ -815,6 +1095,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_response(404)
                 self.end_headers()
+
+        elif path.startswith("/api/slide/") and path.endswith("/tsx"):
+            idx = path.split("/")[3]
+            tsx_path = self.output_dir / f"slide_{int(idx):02d}.tsx"
+            try:
+                content = tsx_path.read_text(encoding="utf-8") if tsx_path.exists() else ""
+                self.send_json({"exists": tsx_path.exists(), "content": content})
+            except Exception as e:
+                self.send_json({"exists": False, "content": "", "error": str(e)})
 
         else:
             self.send_response(404)
@@ -847,6 +1136,20 @@ class Handler(BaseHTTPRequestHandler):
                 text = json.loads(body).get("text", "")
                 nf = self.output_dir / f"narration_{idx}.txt"
                 nf.write_text(text + "\n", encoding="utf-8")
+                self.send_json({"ok": True})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, status=500)
+
+        elif path.startswith("/api/slide/") and path.endswith("/tsx"):
+            idx = path.split("/")[3]
+            try:
+                data = json.loads(body) if body else {}
+                tsx_path = self.output_dir / f"slide_{int(idx):02d}.tsx"
+                if data.get("delete"):
+                    tsx_path.unlink(missing_ok=True)
+                else:
+                    content = data.get("content", "")
+                    tsx_path.write_text(content, encoding="utf-8")
                 self.send_json({"ok": True})
             except Exception as e:
                 self.send_json({"ok": False, "error": str(e)}, status=500)

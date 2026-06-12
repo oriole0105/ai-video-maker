@@ -11,16 +11,123 @@ Usage:
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import threading
+import urllib.error
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
 MAKE_VIDEO_PY = Path(__file__).parent / "make_video.py"
+
+# ── AI 生成 TSX 支援 ──────────────────────────────────────────────────────
+
+THEME_COLORS = {
+    "warm-amber":     {"bg": "linear-gradient(160deg, #1c1208 0%, #2d1f0a 100%)", "text": "#f0e6d3", "accent": "#f59e0b", "sub": "#fcd34d"},
+    "tech-dark":      {"bg": "linear-gradient(135deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%)", "text": "#e2e8f0", "accent": "#6366f1", "sub": "#818cf8"},
+    "clean-light":    {"bg": "#ffffff", "text": "#1e293b", "accent": "#2563eb", "sub": "#3b82f6"},
+    "corporate-navy": {"bg": "#f0f4f8", "text": "#1e293b", "accent": "#1e3a5f", "sub": "#2d5986"},
+}
+
+
+def _get_ai_config():
+    """Returns (provider, config_dict). provider is None if not configured."""
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    ai_base_url   = os.environ.get("AI_BASE_URL", "").strip()
+    ai_api_key    = os.environ.get("AI_API_KEY", "ollama").strip()
+    ai_model      = os.environ.get("AI_MODEL", "").strip()
+
+    if anthropic_key:
+        return "claude", {"api_key": anthropic_key, "model": ai_model or "claude-sonnet-4-6"}
+    if ai_base_url:
+        return "openai_compat", {
+            "base_url": ai_base_url.rstrip("/"),
+            "api_key": ai_api_key,
+            "model": ai_model or "gemma4:26b",
+        }
+    return None, {}
+
+
+def _http_post_json(url, payload, headers):
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code}: {body[:300]}")
+
+
+def _call_claude(config, prompt):
+    result = _http_post_json(
+        "https://api.anthropic.com/v1/messages",
+        {"model": config["model"], "max_tokens": 4096,
+         "messages": [{"role": "user", "content": prompt}]},
+        {"x-api-key": config["api_key"], "anthropic-version": "2023-06-01",
+         "content-type": "application/json"},
+    )
+    return result["content"][0]["text"]
+
+
+def _call_openai_compat(config, prompt):
+    result = _http_post_json(
+        config["base_url"] + "/v1/chat/completions",
+        {"model": config["model"], "temperature": 0.3, "max_tokens": 4096,
+         "messages": [{"role": "user", "content": prompt}]},
+        {"Authorization": "Bearer " + config["api_key"],
+         "content-type": "application/json"},
+    )
+    return result["choices"][0]["message"]["content"]
+
+
+def _build_tsx_prompt(idx, desc, output_dir):
+    narration_file = output_dir / f"narration_{idx}.txt"
+    narration = narration_file.read_text(encoding="utf-8").strip() if narration_file.exists() else ""
+
+    slides_md = output_dir / "slides.md"
+    slide_section = f"（slides.md 第 {idx} 頁）"
+    if slides_md.exists():
+        parts = re.split(r"\n---\n", slides_md.read_text(encoding="utf-8"))
+        n = int(idx)
+        if len(parts) > n:
+            slide_section = parts[n].strip()
+
+    theme_file = output_dir / ".theme"
+    theme = theme_file.read_text(encoding="utf-8").strip() if theme_file.exists() else "tech-dark"
+    c = THEME_COLORS.get(theme, THEME_COLORS["tech-dark"])
+    duration_est = round(len(narration) * 0.065)
+
+    return (
+        "你是一個 Remotion 動畫開發者。請根據以下投影片內容、旁白和主題色系，生成一個完整的 Remotion React component（.tsx 格式）。\n\n"
+        f"## 投影片內容（第 {idx} 頁）\n{slide_section}\n\n"
+        f"## 旁白文字（約 {duration_est} 秒）\n{narration}\n\n"
+        f"## 主題色系（{theme}）\n"
+        f"- 背景：{c['bg']}\n- 主文字：{c['text']}\n- 強調色：{c['accent']}\n- 副強調色：{c['sub']}\n"
+        "- 字型：Noto Sans TC, PingFang TC, system-ui, sans-serif\n\n"
+        f"## 使用者描述的動畫效果\n{desc or '（未描述，請根據投影片內容與旁白節奏自由設計）'}\n\n"
+        "## 技術規格（必須遵守）\n"
+        "1. Props 介面：{ audioPath: string, durationFrames: number, fps: number, width?: number, height?: number }\n"
+        "2. 動畫觸發時間點必須以 durationFrames 的比例計算（如 Math.round(durationFrames * 0.25)），禁止寫死幀號\n"
+        "3. 可使用的 Remotion API：useCurrentFrame, useVideoConfig, interpolate, spring, AbsoluteFill, Sequence\n"
+        "4. export default Slide（最後一行）\n"
+        "5. 輸出完整 .tsx 內容，不要加 markdown 代碼塊包裹\n"
+        "6. style 中計算動態數值請用字串拼接：'translateY(' + value + 'px)'，避免在 JSX 屬性值裡用反引號\n\n"
+        "請直接輸出完整的 TSX 程式碼，無需說明："
+    )
+
+
+def _clean_tsx(code: str) -> str:
+    """Strip markdown code fences if the AI wrapped the response."""
+    code = code.strip()
+    code = re.sub(r"^```(?:tsx|typescript|jsx|js)?\n?", "", code)
+    code = re.sub(r"\n?```\s*$", "", code)
+    return code.strip()
 
 HTML = r"""<!DOCTYPE html>
 <html lang="zh-TW">
@@ -657,13 +764,16 @@ function selectSlide(i) {
         <span class="tsx-save-status" id="tsxStatus"></span>
       </div>
       <div class="ai-panel" id="aiPanel" style="display:none">
+        <div id="aiConfigInfo" style="font-size:11px;color:#6d28d9;margin-bottom:6px;min-height:16px"></div>
         <div class="ai-label">描述你想要的動畫效果</div>
-        <textarea id="aiDesc" class="ai-desc" placeholder="例如：條列點逐一從左側飛入，配合旁白節奏分散出現，背景用 warm-amber 主題色..."></textarea>
-        <div class="tsx-toolbar">
+        <textarea id="aiDesc" class="ai-desc" placeholder="例如：條列點逐一從左側飛入，配合旁白節奏分散出現..."></textarea>
+        <div class="tsx-toolbar" style="flex-wrap:wrap;gap:6px">
+          <button class="btn-ai" id="btnGenerate" onclick="generateTsx('${s.idx}')">✨ AI 直接生成</button>
           <button class="btn-copy-prompt" onclick="copyPrompt('${s.idx}')">複製提示詞</button>
           <span class="copy-done" id="copyDone" style="display:none">✓ 已複製！貼到 Claude / ChatGPT 取得 TSX</span>
         </div>
-        <div class="ai-label" style="margin-top:4px">貼入 AI 生成的 TSX 程式碼</div>
+        <div id="genStatus" style="font-size:12px;margin-top:4px;min-height:16px"></div>
+        <div class="ai-label" style="margin-top:8px;color:#9ca3af">手動貼入（fallback）</div>
         <textarea id="aiTsxInput" class="ai-tsx-input" placeholder="貼入 AI 回傳的完整 .tsx 程式碼..."></textarea>
         <div class="tsx-toolbar">
           <button class="btn-apply-tsx" onclick="applyAiTsx()">套用到編輯器</button>
@@ -794,9 +904,68 @@ async function deleteTsx(idx, slideIdx) {
   }
 }
 
-function toggleAiPanel() {
+async function toggleAiPanel() {
   const p = document.getElementById('aiPanel');
-  if (p) p.style.display = p.style.display === 'none' ? '' : 'none';
+  if (!p) return;
+  const nowHidden = p.style.display === 'none';
+  p.style.display = nowHidden ? '' : 'none';
+  if (nowHidden) {
+    const info = document.getElementById('aiConfigInfo');
+    if (info) {
+      info.textContent = '確認 AI 設定中...';
+      try {
+        const res = await fetch('/api/ai-config');
+        const cfg = await res.json();
+        if (cfg.configured) {
+          info.textContent = 'AI：' + cfg.provider + ' / ' + cfg.model;
+          info.style.color = '#6d28d9';
+        } else {
+          info.innerHTML = '⚠ 未設定 API。請設定環境變數後重啟編輯器（見下方說明）。';
+          info.style.color = '#dc2626';
+        }
+      } catch {
+        info.textContent = '';
+      }
+    }
+  }
+}
+
+async function generateTsx(idx) {
+  const desc = (document.getElementById('aiDesc') || {}).value || '';
+  const btn = document.getElementById('btnGenerate');
+  const statusEl = document.getElementById('genStatus');
+  if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+  if (statusEl) { statusEl.textContent = ''; statusEl.style.color = ''; }
+  try {
+    const res = await fetch('/api/slide/' + idx + '/generate-tsx', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ desc }),
+    });
+    const data = await res.json();
+    if (data.ok && data.tsx) {
+      const editor = document.getElementById('tsxEditor');
+      if (editor) editor.value = data.tsx;
+      if (statusEl) {
+        statusEl.textContent = '✓ 已生成！請確認程式碼後點「儲存 TSX」';
+        statusEl.style.color = '#16a34a';
+      }
+      const panel = document.getElementById('aiPanel');
+      if (panel) panel.style.display = 'none';
+    } else {
+      if (statusEl) {
+        statusEl.style.color = '#dc2626';
+        statusEl.textContent = '✗ ' + (data.error || '生成失敗');
+      }
+    }
+  } catch(e) {
+    if (statusEl) {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = '✗ 網路錯誤：' + e.message;
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✨ AI 直接生成'; }
+  }
 }
 
 function applyAiTsx() {
@@ -1105,6 +1274,14 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 self.send_json({"exists": False, "content": "", "error": str(e)})
 
+        elif path == "/api/ai-config":
+            provider, config = _get_ai_config()
+            self.send_json({
+                "configured": bool(provider),
+                "provider": provider or "none",
+                "model": config.get("model", "") if provider else "",
+            })
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -1207,6 +1384,29 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"success": False, "message": "逾時（超過 10 分鐘）"})
             except Exception as e:
                 self.send_json({"success": False, "message": str(e)}, status=500)
+
+        elif path.startswith("/api/slide/") and path.endswith("/generate-tsx"):
+            idx = path.split("/")[3]
+            try:
+                data = json.loads(body) if body else {}
+                desc = data.get("desc", "")
+                provider, config = _get_ai_config()
+                if not provider:
+                    self.send_json({"ok": False, "error": (
+                        "未設定 AI API。請設定環境變數後重啟編輯器：\n"
+                        "  Claude：export ANTHROPIC_API_KEY=sk-ant-...\n"
+                        "  Ollama：export AI_BASE_URL=http://localhost:11434  AI_MODEL=gemma4:26b"
+                    )}, status=400)
+                    return
+                prompt = _build_tsx_prompt(idx, desc, self.output_dir)
+                if provider == "claude":
+                    tsx_raw = _call_claude(config, prompt)
+                else:
+                    tsx_raw = _call_openai_compat(config, prompt)
+                tsx_code = _clean_tsx(tsx_raw)
+                self.send_json({"ok": True, "tsx": tsx_code})
+            except Exception as e:
+                self.send_json({"ok": False, "error": str(e)}, status=500)
 
         else:
             self.send_response(404)

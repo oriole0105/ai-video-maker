@@ -177,11 +177,13 @@ def get_duration(path: Path) -> float:
 def _ffmpeg_static_segment(img: Path, audio: Path, seg: Path) -> None:
     run([
         "ffmpeg", "-y", "-loop", "1",
+        "-framerate", "30",          # 明確設定輸入 fps，和 Remotion 段統一為 30fps
         "-i", str(img), "-i", str(audio),
         "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p",
+        "-r", "30",                  # 輸出 fps 鎖定 30
         "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,"
                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
         "-shortest", str(seg),
     ])
 
@@ -419,8 +421,12 @@ def step_concat(output_dir: Path, segments: list[Path]) -> Path:
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
         "-i", str(concat),
         "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
+        "-r", "30",                  # 統一輸出 30fps，避免各段 fps 不一致
+        "-vsync", "cfr",             # 強制 constant frame rate，消除 pts 跳躍
+        "-g", "60",                  # keyframe 每 2 秒，seek 更流暢
+        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
         "-af", "aresample=async=1",
+        "-movflags", "+faststart",   # moov atom 移到檔頭，播放器不用等到尾
         str(final),
     ])
     print("  完成。")
@@ -463,7 +469,9 @@ def step_srt(output_dir: Path) -> Path:
         ["ffmpeg", "-y", "-i", str(final), "-i", str(srt),
          "-map", "0:v", "-map", "0:a", "-map", "1:s",
          "-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text",
-         "-metadata:s:s:0", "language=zho", str(tmp)],
+         "-metadata:s:s:0", "language=zho",
+         "-movflags", "+faststart",
+         str(tmp)],
         capture_output=True, check=True,
     )
     tmp.replace(final)

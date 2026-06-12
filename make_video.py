@@ -413,22 +413,42 @@ def step_segments(output_dir: Path, narrations: list[Path]) -> list[Path]:
 
 def step_concat(output_dir: Path, segments: list[Path]) -> Path:
     print("[4/5] 串接所有片段（FFmpeg）...")
-    concat = output_dir / "concat_list.txt"
-    concat.write_text("\n".join(f"file '{s.name}'" for s in segments) + "\n",
-                      encoding="utf-8")
     final = output_dir / "final.mp4"
-    run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(concat),
-        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-        "-r", "30",                  # 統一輸出 30fps，避免各段 fps 不一致
-        "-vsync", "cfr",             # 強制 constant frame rate，消除 pts 跳躍
-        "-g", "60",                  # keyframe 每 2 秒，seek 更流暢
-        "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
-        "-af", "aresample=async=1",
+
+    # 用 concat **filter**（非 demuxer）：完整解碼後重新計算每一幀的時間戳。
+    # 靜態片段（timebase 1/15360）與 Remotion 動畫片段（timebase 1/90000）
+    # 時基不同，concat demuxer 會誤算 PTS、配合 CFR 大量複製幀，
+    # 造成影片時長爆增、畫面卡在第一頁。concat filter 不受時基差異影響。
+    n = len(segments)
+    cmd = ["ffmpeg", "-y"]
+    for seg in segments:
+        cmd += ["-i", str(seg)]
+
+    filters = []
+    concat_inputs = ""
+    for i in range(n):
+        # 影格統一 30fps、解析度 1920x1080、SAR 1:1
+        filters.append(
+            f"[{i}:v]fps=30,scale=1920:1080:force_original_aspect_ratio=decrease,"
+            f"pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v{i}]"
+        )
+        # 音訊統一 44.1kHz 立體聲
+        filters.append(
+            f"[{i}:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo[a{i}]"
+        )
+        concat_inputs += f"[v{i}][a{i}]"
+    filters.append(f"{concat_inputs}concat=n={n}:v=1:a=1[outv][outa]")
+    filter_complex = ";".join(filters)
+
+    cmd += [
+        "-filter_complex", filter_complex,
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "60",
+        "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",   # moov atom 移到檔頭，播放器不用等到尾
         str(final),
-    ])
+    ]
+    run(cmd)
     print("  完成。")
     return final
 
